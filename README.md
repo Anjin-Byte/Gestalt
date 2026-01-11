@@ -59,15 +59,9 @@ The spiral points module loads from `apps/web/src/wasm/wasm_points`.
 The OBJ loader module loads from `apps/web/src/wasm/wasm_obj_loader`.
 The WebGPU demo module loads from `apps/web/src/wasm/wasm_webgpu_demo`.
 
-## Deployment (GitHub Pages)
+## Demo
 
-The GitHub Actions workflow builds the Vite app with `BASE_PATH=/<repo>/` and deploys `apps/web/dist` to Pages using the official actions:
-
-- `actions/upload-pages-artifact`
-- `actions/deploy-pages`
-- The workflow also runs `pnpm build:wasm` so the example module is available on Pages.
-
-Live site: `https://anjin-byte.github.io/Gestalt/`
+Live demo: `https://anjin-byte.github.io/Gestalt/`
 
 ## Rendering backend
 
