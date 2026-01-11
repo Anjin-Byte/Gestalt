@@ -1,0 +1,10 @@
+/Users/taylorhale/Documents/dev_hub/Gestalt/crates/wasm_voxelizer/target/wasm32-unknown-unknown/release/deps/wgpu_types-86d6e5ce997c8515.d: /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/lib.rs /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/assertions.rs /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/counters.rs /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/math.rs
+
+/Users/taylorhale/Documents/dev_hub/Gestalt/crates/wasm_voxelizer/target/wasm32-unknown-unknown/release/deps/libwgpu_types-86d6e5ce997c8515.rlib: /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/lib.rs /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/assertions.rs /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/counters.rs /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/math.rs
+
+/Users/taylorhale/Documents/dev_hub/Gestalt/crates/wasm_voxelizer/target/wasm32-unknown-unknown/release/deps/libwgpu_types-86d6e5ce997c8515.rmeta: /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/lib.rs /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/assertions.rs /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/counters.rs /Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/math.rs
+
+/Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/lib.rs:
+/Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/assertions.rs:
+/Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/counters.rs:
+/Users/taylorhale/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-22.0.0/src/math.rs:

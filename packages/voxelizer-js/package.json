@@ -1,0 +1,7 @@
+{
+  "name": "@gestalt/voxelizer-js",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "types": "./src/index.ts"
+}

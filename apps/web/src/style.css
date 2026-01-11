@@ -1,0 +1,155 @@
+:root {
+  font-family: "IBM Plex Sans", "Segoe UI", Tahoma, sans-serif;
+  color: #e8e6e3;
+  background: #14161a;
+  --panel-bg: rgba(24, 26, 31, 0.9);
+  --accent: #7ad8ff;
+  --border: #2a2f39;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at 20% 20%, #222832, #0f1116 55%, #0b0d12 100%);
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  min-height: calc(100vh - 36px);
+  height: calc(100vh - 36px);
+}
+
+.sidebar {
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+  background: linear-gradient(180deg, #171b22, #11141a);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  height: 100%;
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.panel-body {
+  font-size: 13px;
+  color: #c9d2de;
+  display: grid;
+  gap: 8px;
+}
+
+.panel-body * {
+  opacity: 1;
+  visibility: visible;
+}
+
+#module-controls {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.viewport {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#viewport {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.overlay {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: rgba(12, 14, 18, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.statusbar {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  border-top: 1px solid var(--border);
+  background: #0f1218;
+  font-size: 12px;
+  color: #9aa6b2;
+}
+
+label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #93a1b5;
+}
+
+select,
+button,
+input[type="number"],
+input[type="file"] {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 8px;
+  background: #11141a;
+  color: #d5d9e0;
+  font-size: 13px;
+}
+
+input[type="range"] {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+input[type="checkbox"] {
+  margin-right: 6px;
+}
+
+button {
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+@media (max-width: 900px) {
+  #app {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}

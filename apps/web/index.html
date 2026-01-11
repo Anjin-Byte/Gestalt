@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gestalt Test Bed</title>
+  </head>
+  <body>
+    <div id="app">
+      <aside class="sidebar">
+        <div class="panel" data-panel="module">
+          <h2>Module</h2>
+          <div class="panel-body" id="module-panel"></div>
+        </div>
+        <div class="panel" data-panel="scene">
+          <h2>Scene</h2>
+          <div class="panel-body" id="scene-panel"></div>
+        </div>
+        <div class="panel" data-panel="debug">
+          <h2>Debug</h2>
+          <div class="panel-body" id="debug-panel"></div>
+        </div>
+      </aside>
+      <main class="viewport">
+        <canvas id="viewport"></canvas>
+        <div class="overlay" id="overlay" data-testid="overlay"></div>
+      </main>
+    </div>
+    <footer class="statusbar">
+      <div id="status-text">FPS: -- | Frame: -- ms</div>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

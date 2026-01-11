@@ -1,0 +1,20 @@
+[package]
+name = "wasm_voxelizer"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+voxelizer = { path = "../voxelizer" }
+glam = "0.27"
+wgpu = { version = "22", features = ["webgpu"] }
+bytemuck = { version = "1", features = ["derive"] }
+
+[dependencies.web-sys]
+version = "0.3"
+features = ["console", "HtmlCanvasElement"]

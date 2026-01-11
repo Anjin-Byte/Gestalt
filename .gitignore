@@ -1,41 +1,15 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
-*.dwo
+node_modules
+.DS_Store
+pnpm-lock.yaml
+apps/web/dist
+apps/web/.vite
+apps/web/playwright-report
+apps/web/test-results
+apps/web/src/wasm/wasm_example/*
+!apps/web/src/wasm/wasm_example/wasm_example.js
+apps/web/src/wasm/wasm_points/*
+!apps/web/src/wasm/wasm_points/wasm_points.js
+apps/web/src/wasm/wasm_obj_loader/*
+!apps/web/src/wasm/wasm_obj_loader/wasm_obj_loader.js
+apps/web/src/wasm/wasm_webgpu_demo/*
+!apps/web/src/wasm/wasm_webgpu_demo/wasm_webgpu_demo.js

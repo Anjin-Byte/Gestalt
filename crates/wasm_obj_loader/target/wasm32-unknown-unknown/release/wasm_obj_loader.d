@@ -1,0 +1,1 @@
+/Users/taylorhale/Documents/dev_hub/Gestalt/crates/wasm_obj_loader/target/wasm32-unknown-unknown/release/wasm_obj_loader.wasm: /Users/taylorhale/Documents/dev_hub/Gestalt/crates/wasm_obj_loader/src/lib.rs
