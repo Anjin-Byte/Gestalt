@@ -1,28 +1,18 @@
 import type { ModuleOutput, TestbedModule } from "./types";
 import { VoxelizerAdapter } from "@gestalt/voxelizer-js";
 
-const buildCube = (size: number) => {
-  const s = size * 0.5;
-  const positions = new Float32Array([
-    -s, -s, -s,
-    s, -s, -s,
-    s, s, -s,
-    -s, s, -s,
-    -s, -s, s,
-    s, -s, s,
-    s, s, s,
-    -s, s, s
-  ]);
-  const indices = new Uint32Array([
-    0, 1, 2, 0, 2, 3,
-    4, 6, 5, 4, 7, 6,
-    0, 4, 5, 0, 5, 1,
-    1, 5, 6, 1, 6, 2,
-    2, 6, 7, 2, 7, 3,
-    3, 7, 4, 3, 4, 0
-  ]);
-  return { positions, indices };
-};
+type SampleModel = { id: string; label: string; file: string };
+
+const defaultSampleModels: SampleModel[] = [
+  { id: "cube", label: "Cube", file: "models/cube.obj" },
+  { id: "pyramid", label: "Pyramid", file: "models/pyramid.obj" },
+  { id: "bunny", label: "Bunny", file: "models/bunny.obj" },
+  { id: "teapot", label: "Teapot", file: "models/teapot.obj" },
+  { id: "elephant", label: "Elephant", file: "models/elephant.obj" },
+  { id: "dragon", label: "Dragon", file: "models/dragon.obj" },
+  { id: "chess-king", label: "Chess King", file: "models/ChessKing.obj" },
+  { id: "sponza", label: "Sponza", file: "models/sponza.obj" }
+];
 
 const parseObjFallback = (input: string) => {
   const positions: number[] = [];
@@ -167,17 +157,77 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
   let updateFileName: ((value: string) => void) | null = null;
   let fileName = "No file";
   let objText = "";
+  let sampleModels: SampleModel[] = [...defaultSampleModels];
+  let sampleId = sampleModels[0]?.id ?? "cube";
+  let sampleText = "";
+  let hasUploadedFile = false;
+  const sampleCache = new Map<string, string>();
   let logEnabled = true;
   let runInFlight = false;
   let deviceLimits: GPUDevice["limits"] | null = null;
   let ctxRef: {
     requestGpuDevice: () => Promise<GPUDevice | null>;
     emitOutputs?: (outputs: ModuleOutput[]) => void;
+    baseUrl: string;
   } | null = null;
   let logger: ((message: string) => void) | null = null;
 
   const logStage = (stage: string, message: string) => {
     logger?.(`[wasm-voxelizer:${stage}] ${message}`);
+  };
+
+  const loadSampleModel = async (id: string) => {
+    const entry = sampleModels.find((model) => model.id === id) ?? sampleModels[0];
+    if (!entry) {
+      sampleText = "";
+      return;
+    }
+    const cached = sampleCache.get(entry.id);
+    if (cached) {
+      sampleText = cached;
+      return;
+    }
+    if (!ctxRef) {
+      sampleText = "";
+      return;
+    }
+    const base = new URL(ctxRef.baseUrl || "/", window.location.href);
+    const url = new URL(entry.file, base).toString();
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Sample fetch failed: ${entry.label}`);
+    }
+    const text = await response.text();
+    sampleCache.set(entry.id, text);
+    sampleText = text;
+  };
+
+  const loadSampleManifest = async (baseUrl: string) => {
+    const base = new URL(baseUrl || "/", window.location.href);
+    const url = new URL("models/index.json", base).toString();
+    const response = await fetch(url);
+    if (!response.ok) {
+      return defaultSampleModels;
+    }
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+      return defaultSampleModels;
+    }
+    const models = data
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+        const id = String((entry as { id?: unknown }).id ?? "").trim();
+        const label = String((entry as { label?: unknown }).label ?? "").trim();
+        const file = String((entry as { file?: unknown }).file ?? "").trim();
+        if (!id || !label || !file) {
+          return null;
+        }
+        return { id, label, file };
+      })
+      .filter((entry): entry is SampleModel => Boolean(entry));
+    return models.length > 0 ? models : defaultSampleModels;
   };
 
   const computeMaxGridDim = () => {
@@ -200,6 +250,8 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
       ctxRef = ctx;
       logStage("init", "start");
       try {
+        sampleModels = await loadSampleManifest(ctx.baseUrl ?? "/");
+        sampleId = sampleModels[0]?.id ?? "cube";
         voxelizer = await VoxelizerAdapter.create({
           loadWasm: async () => await import("../wasm/wasm_voxelizer/wasm_voxelizer.js"),
           logEnabled
@@ -233,6 +285,12 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
       api.addText({ id: "sparse-stats", label: "Sparse Stats", initial: "Pending" });
       api.addText({ id: "paging-status", label: "Paging", initial: "Disabled" });
       api.addText({ id: "obj-file", label: "OBJ File", initial: fileName });
+      api.addSelect({
+        id: "sample-model",
+        label: "Sample Model",
+        options: sampleModels.map((model) => model.label),
+        initial: sampleModels[0]?.label ?? "Sample"
+      });
       api.addFile({
         id: "obj-input",
         label: "Pick OBJ",
@@ -241,6 +299,7 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
           if (!file) {
             fileName = "No file";
             objText = "";
+            hasUploadedFile = false;
             statusText = "No file selected";
             updateFileName?.(fileName);
             updateStatus?.(statusText);
@@ -252,6 +311,7 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
           updateStatus?.(statusText);
           try {
             objText = await file.text();
+            hasUploadedFile = true;
             statusText = `Ready (${objText.length} chars)`;
             updateStatus?.(statusText);
           } catch {
@@ -420,9 +480,25 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
       );
 
       try {
-        const { positions, indices } = objText
-          ? parseObjFallback(objText)
-          : buildCube(1.0);
+        const selectedLabel = String(job.params["sample-model"] ?? sampleModels[0]?.label ?? "");
+        const selectedModel =
+          sampleModels.find((model) => model.label === selectedLabel) ?? sampleModels[0];
+        const selectedId = selectedModel?.id ?? sampleId;
+        if (!hasUploadedFile && selectedId !== sampleId) {
+          sampleId = selectedId;
+          sampleText = "";
+        }
+        if (!hasUploadedFile && !sampleText) {
+          await loadSampleModel(sampleId);
+        }
+        const sourceText = hasUploadedFile ? objText : sampleText;
+        if (!sourceText) {
+          statusText = "No sample model available";
+          updateStatus?.(statusText);
+          logStage("prep", "no sample model available");
+          return [];
+        }
+        const { positions, indices } = parseObjFallback(sourceText);
         if (positions.length === 0 || indices.length === 0) {
           statusText = "No faces found";
           updateStatus?.(statusText);

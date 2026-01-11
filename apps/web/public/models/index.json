@@ -1,0 +1,10 @@
+[
+  { "id": "cube", "label": "Cube", "file": "models/cube.obj" },
+  { "id": "pyramid", "label": "Pyramid", "file": "models/pyramid.obj" },
+  { "id": "bunny", "label": "Bunny", "file": "models/bunny.obj" },
+  { "id": "teapot", "label": "Teapot", "file": "models/teapot.obj" },
+  { "id": "elephant", "label": "Elephant", "file": "models/elephant.obj" },
+  { "id": "dragon", "label": "Dragon", "file": "models/dragon.obj" },
+  { "id": "chess-king", "label": "Chess King", "file": "models/ChessKing.obj" },
+  { "id": "sponza", "label": "Sponza", "file": "models/sponza.obj" }
+]
