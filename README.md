@@ -67,6 +67,8 @@ The GitHub Actions workflow builds the Vite app with `BASE_PATH=/<repo>/` and de
 - `actions/deploy-pages`
 - The workflow also runs `pnpm build:wasm` so the example module is available on Pages.
 
+Live site: `https://anjin-byte.github.io/Gestalt/`
+
 ## Rendering backend
 
 The default backend is Three.js WebGPURenderer with WebGL2 fallback. The backend is wrapped so another renderer can be swapped in later.
