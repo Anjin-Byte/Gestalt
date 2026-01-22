@@ -14,6 +14,12 @@ export type VoxelsDescriptor = {
   renderMode?: "cubes" | "points";
   chunkSize?: number;
   pointSize?: number;
+  maxInstancesPerMesh?: number;
+  lod?: {
+    mode: "camera";
+    pixelThreshold: number;
+    maxDistance?: number;
+  };
 };
 
 export type LinesDescriptor = {

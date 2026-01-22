@@ -6,6 +6,7 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
+  Vector2,
   Vector3
 } from "three";
 import type { ModuleOutput } from "../modules/types";
@@ -52,6 +53,8 @@ export class Viewer {
   setOutputs(outputs: ModuleOutput[]): void {
     this.disposeOutputGroup();
     this.outputGroup.clear();
+    const viewport = new Vector2();
+    this.backend.renderer.getSize(viewport);
     const renderStart = performance.now();
     let lastOverlayUpdate = 0;
     const onChunkAdded = () => {
@@ -64,7 +67,10 @@ export class Viewer {
       this.updateOverlay();
     };
     for (const output of outputs) {
-      const { object } = buildOutputObject(output);
+      const { object } = buildOutputObject(output, {
+        camera: this.backend.camera,
+        viewportHeight: viewport.y
+      });
       this.outputGroup.add(object);
       if (
         output.kind === "voxels" &&

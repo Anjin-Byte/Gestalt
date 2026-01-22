@@ -70,6 +70,70 @@ const normalizeRenderMode = (value: unknown) =>
 const normalizeFloat32Array = (input: Float32Array<ArrayBufferLike>) =>
   input.buffer instanceof ArrayBuffer ? input : new Float32Array(input);
 
+const filterSurfaceOnly = (
+  positions: Float32Array,
+  dims: [number, number, number],
+  origin: [number, number, number],
+  voxelSize: number
+) => {
+  const voxelCount = positions.length / 3;
+  if (voxelCount === 0) {
+    return positions;
+  }
+  const dimX = dims[0];
+  const dimY = dims[1];
+  const dimZ = dims[2];
+  const plane = dimX * dimY;
+  const total = dimX * dimY * dimZ;
+  const keys = new Uint32Array(voxelCount);
+  let uniqueCount = 0;
+  for (let i = 0; i < voxelCount; i += 1) {
+    const base = i * 3;
+    const gx = Math.floor((positions[base] - origin[0]) / voxelSize);
+    const gy = Math.floor((positions[base + 1] - origin[1]) / voxelSize);
+    const gz = Math.floor((positions[base + 2] - origin[2]) / voxelSize);
+    if (gx < 0 || gy < 0 || gz < 0 || gx >= dimX || gy >= dimY || gz >= dimZ) {
+      continue;
+    }
+    const key = gx + dimX * gy + plane * gz;
+    keys[uniqueCount] = key;
+    uniqueCount += 1;
+  }
+  if (uniqueCount === 0) {
+    return new Float32Array();
+  }
+  const occupancy = new Uint8Array(total);
+  for (let i = 0; i < uniqueCount; i += 1) {
+    occupancy[keys[i]] = 1;
+  }
+  const surface: number[] = [];
+  for (let i = 0; i < uniqueCount; i += 1) {
+    const key = keys[i];
+    if (!occupancy[key]) {
+      continue;
+    }
+    const gz = Math.floor(key / plane);
+    const rem = key - gz * plane;
+    const gy = Math.floor(rem / dimX);
+    const gx = rem - gy * dimX;
+    const hasNegX = gx > 0 && occupancy[key - 1];
+    const hasPosX = gx + 1 < dimX && occupancy[key + 1];
+    const hasNegY = gy > 0 && occupancy[key - dimX];
+    const hasPosY = gy + 1 < dimY && occupancy[key + dimX];
+    const hasNegZ = gz > 0 && occupancy[key - plane];
+    const hasPosZ = gz + 1 < dimZ && occupancy[key + plane];
+    if (hasNegX && hasPosX && hasNegY && hasPosY && hasNegZ && hasPosZ) {
+      continue;
+    }
+    surface.push(
+      origin[0] + (gx + 0.5) * voxelSize,
+      origin[1] + (gy + 0.5) * voxelSize,
+      origin[2] + (gz + 0.5) * voxelSize
+    );
+  }
+  return new Float32Array(surface);
+};
+
 type VoxelParams = {
   gridDim: number;
   voxelSize: number;
@@ -78,6 +142,9 @@ type VoxelParams = {
   progressive: boolean;
   compact: boolean;
   gpuCompact: boolean;
+  surfaceOnly: boolean;
+  lodEnabled: boolean;
+  lodPixelSize: number;
   paging: boolean;
   page: number;
   bricksPerPage: number;
@@ -100,6 +167,24 @@ const computeAutoRenderChunk = (limits: GPUDevice["limits"] | null) => {
   );
   return clamp(maxInstances, 1000, 5_000_000);
 };
+
+const computeMaxInstancesPerMesh = (limits: GPUDevice["limits"] | null) => {
+  if (!limits) {
+    return null;
+  }
+  const maxBufferSize = (limits as { maxBufferSize?: number }).maxBufferSize;
+  const maxStorage = limits.maxStorageBufferBindingSize;
+  const governing =
+    maxBufferSize && maxStorage ? Math.min(maxBufferSize, maxStorage) : maxBufferSize ?? maxStorage ?? 0;
+  if (!governing) {
+    return null;
+  }
+  const bytesPerInstance = 16 * 4;
+  const safety = 0.75;
+  const maxInstances = Math.floor((governing * safety) / bytesPerInstance);
+  return clamp(maxInstances, 1000, 5_000_000);
+};
+
 
 const appendBrickBoundsLines = (
   lines: number[],
@@ -326,6 +411,8 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
       api.addCheckbox({ id: "compact", label: "Compact Chunks", initial: true });
       api.addCheckbox({ id: "wasm-logs", label: "WASM Logs", initial: true });
       api.addCheckbox({ id: "gpu-compact", label: "GPU Compact Positions", initial: false });
+      api.addCheckbox({ id: "surface-only", label: "Surface Only", initial: false });
+      api.addCheckbox({ id: "lod-enabled", label: "LOD (camera-aware)", initial: false });
       api.addCheckbox({ id: "paging", label: "Paging (brick streaming)", initial: false });
       api.addCheckbox({ id: "brick-bounds", label: "Show Brick Bounds", initial: false });
       api.addSelect({
@@ -381,6 +468,14 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
         max: 0.01,
         step: 0.0005,
         initial: 0.001
+      });
+      api.addNumber({
+        id: "lod-pixel-size",
+        label: "LOD Min Pixel Size",
+        min: 0.25,
+        max: 8,
+        step: 0.25,
+        initial: 2
       });
       api.addNumber({
         id: "page",
@@ -441,6 +536,9 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
         progressive: asBool(job.params.progressive, true),
         compact: asBool(job.params.compact, true),
         gpuCompact: asBool(job.params["gpu-compact"], false),
+        surfaceOnly: asBool(job.params["surface-only"], false),
+        lodEnabled: asBool(job.params["lod-enabled"], false),
+        lodPixelSize: clamp(asNumber(job.params["lod-pixel-size"], 2), 0.25, 20),
         paging: asBool(job.params.paging, false),
         page: clamp(asInt(job.params.page, 0), 0, 100000),
         bricksPerPage: clamp(asInt(job.params["bricks-per-page"], 0), 0, 500000),
@@ -452,6 +550,10 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
         wasmLogs: asBool(job.params["wasm-logs"], true)
       };
       const autoRenderChunk = computeAutoRenderChunk(deviceLimits);
+      const autoMaxInstances = computeMaxInstancesPerMesh(deviceLimits);
+      if (autoMaxInstances) {
+        logStage("limits", `maxInstancesPerMesh=${autoMaxInstances}`);
+      }
       const effectiveRenderChunk =
         params.renderChunk === 0
           ? autoRenderChunk ?? 20000
@@ -469,17 +571,30 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
       }
       logEnabled = params.wasmLogs;
       voxelizer?.setLogEnabled(logEnabled);
-      const previewProgress = params.renderMode === "points";
+      const lodActive = params.lodEnabled && params.renderMode === "cubes";
+      const previewProgress = params.renderMode === "points" && !lodActive;
       logStage(
         "params",
         `grid=${params.gridDim} voxel=${params.voxelSize.toFixed(4)} ` +
           `render=${params.renderMode} chunkSize=${params.chunkSize} ` +
           `renderChunk=${effectiveRenderChunk} progressive=${params.progressive} ` +
           `compact=${params.compact} gpuCompact=${params.gpuCompact} ` +
+          `surfaceOnly=${params.surfaceOnly} lod=${lodActive} ` +
+          `lodPx=${params.lodPixelSize.toFixed(2)} ` +
           `paging=${params.paging}`
       );
+      if (params.lodEnabled && !lodActive) {
+        logStage("params", "lod ignored (render=points)");
+      }
 
       try {
+        if (!voxelizer) {
+          statusText = "Voxelizer not initialized";
+          updateStatus?.(statusText);
+          logStage("error", "voxelizer not initialized");
+          return [];
+        }
+        const voxelizerRef = voxelizer;
         const selectedLabel = String(job.params["sample-model"] ?? sampleModels[0]?.label ?? "");
         const selectedModel =
           sampleModels.find((model) => model.label === selectedLabel) ?? sampleModels[0];
@@ -506,13 +621,16 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
           return [];
         }
 
-        const resolved = voxelizer.resolveGrid({
+        const resolved = voxelizerRef.resolveGrid({
           positions,
           gridDim: params.gridDim,
           voxelSize: params.voxelSize,
           fitBounds: params.fitBounds
         });
         const { grid, voxelSize, origin } = resolved;
+        const lodConfig = lodActive
+          ? { mode: "camera" as const, pixelThreshold: params.lodPixelSize }
+          : undefined;
         let voxels: Float32Array<ArrayBufferLike> = new Float32Array();
         let brickDim = 0;
         let brickCount = 0;
@@ -532,7 +650,7 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
           if (params.gpuCompact) {
             logStage("params", "paging enabled: gpuCompact ignored (needs occupancy)");
           }
-          const chunks = await voxelizer.voxelizeSparseChunked({
+          const chunks = await voxelizerRef.voxelizeSparseChunked({
             positions,
             indices,
             grid,
@@ -540,13 +658,16 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
             chunkSize: params.chunkSize,
             compact: params.compact
           });
-          const bricks = voxelizer.flattenBricksFromChunks(chunks);
-          const pageResult = voxelizer.pageBricks(bricks, {
+          const bricks = voxelizerRef.flattenBricksFromChunks(chunks);
+          const pageResult = voxelizerRef.pageBricks(bricks, {
             page: params.page,
             bricksPerPage: params.bricksPerPage
           });
           const active = pageResult.bricks;
-          voxels = voxelizer.buildPositionsForBricks(active, voxelSize, origin);
+          voxels = voxelizerRef.buildPositionsForBricks(active, voxelSize, origin);
+          if (params.surfaceOnly) {
+            voxels = filterSurfaceOnly(voxels, grid.dims, origin, voxelSize);
+          }
           const boundsLines: number[] = [];
           if (params.showBrickBounds) {
             for (const brick of active) {
@@ -577,7 +698,9 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
               color: [0.4, 0.9, 0.6],
               renderMode: params.renderMode,
               chunkSize: effectiveRenderChunk,
-              pointSize: params.pointSize
+              pointSize: params.pointSize,
+              maxInstancesPerMesh: autoMaxInstances ?? undefined,
+              lod: lodConfig
             },
             label: "Voxelized (paged)"
           });
@@ -612,7 +735,7 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
         updatePaging?.("Disabled");
 
         if (params.progressive && !params.gpuCompact) {
-          const chunks = await voxelizer.voxelizeSparseChunked({
+          const chunks = await voxelizerRef.voxelizeSparseChunked({
             positions,
             indices,
             grid,
@@ -623,7 +746,7 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
           logStage("voxelize", `chunks=${chunks.length}`);
           const allPositions: number[] = [];
           for (const chunk of chunks) {
-            const chunkVoxels = voxelizer.expandSparseToPositions(chunk, origin, voxelSize);
+            const chunkVoxels = voxelizerRef.expandSparseToPositions(chunk, origin, voxelSize);
             for (let i = 0; i < chunkVoxels.length; i += 1) {
               allPositions.push(chunkVoxels[i]);
             }
@@ -639,7 +762,8 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
                     color: [0.4, 0.9, 0.6],
                     renderMode: params.renderMode,
                     chunkSize: effectiveRenderChunk,
-                    pointSize: params.pointSize
+                    pointSize: params.pointSize,
+                    maxInstancesPerMesh: autoMaxInstances ?? undefined
                   },
                   label: "Voxelized (progressive)"
                 }
@@ -648,8 +772,11 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
             await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
           }
           voxels = new Float32Array(allPositions);
+          if (params.surfaceOnly) {
+            voxels = filterSurfaceOnly(voxels, grid.dims, origin, voxelSize);
+          }
         } else if (params.progressive && params.gpuCompact) {
-          const chunks = await voxelizer.voxelizePositionsChunked({
+          const chunks = await voxelizerRef.voxelizePositionsChunked({
             positions,
             indices,
             grid,
@@ -674,7 +801,8 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
                     color: [0.4, 0.9, 0.6],
                     renderMode: params.renderMode,
                     chunkSize: effectiveRenderChunk,
-                    pointSize: params.pointSize
+                    pointSize: params.pointSize,
+                    maxInstancesPerMesh: autoMaxInstances ?? undefined
                   },
                   label: "Voxelized (gpu-compact progressive)"
                 }
@@ -683,8 +811,11 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
             await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
           }
           voxels = new Float32Array(allPositions);
+          if (params.surfaceOnly) {
+            voxels = filterSurfaceOnly(voxels, grid.dims, origin, voxelSize);
+          }
         } else if (params.gpuCompact) {
-          const result = await voxelizer.voxelizePositions({
+          const result = await voxelizerRef.voxelizePositions({
             positions,
             indices,
             grid,
@@ -692,16 +823,22 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
             maxPositions
           });
           voxels = new Float32Array(result.positions);
+          if (params.surfaceOnly) {
+            voxels = filterSurfaceOnly(voxels, grid.dims, origin, voxelSize);
+          }
           brickDim = result.brick_dim;
           brickCount = result.brick_count;
         } else {
-          const result = await voxelizer.voxelizeSparse({
+          const result = await voxelizerRef.voxelizeSparse({
             positions,
             indices,
             grid,
             epsilon: params.epsilon
           });
-          voxels = voxelizer.expandSparseToPositions(result, origin, voxelSize);
+          voxels = voxelizerRef.expandSparseToPositions(result, origin, voxelSize);
+          if (params.surfaceOnly) {
+            voxels = filterSurfaceOnly(voxels, grid.dims, origin, voxelSize);
+          }
           brickDim = result.brick_dim;
           brickCount = Math.floor(result.brick_origins.length / 3);
         }
@@ -725,7 +862,9 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
             color: [0.4, 0.9, 0.6],
             renderMode: params.renderMode,
             chunkSize: effectiveRenderChunk,
-            pointSize: params.pointSize
+            pointSize: params.pointSize,
+            maxInstancesPerMesh: autoMaxInstances ?? undefined,
+            lod: lodConfig
           },
           label: "Voxelized"
         };

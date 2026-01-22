@@ -11,6 +11,7 @@ import {
   Matrix4,
   Mesh,
   MeshStandardMaterial,
+  PerspectiveCamera,
   Points,
   PointsMaterial,
   SRGBColorSpace,
@@ -28,7 +29,12 @@ export type OutputStats = {
   instances: number;
 };
 
-const LOG_VIEWER = false;
+const LOG_VIEWER = true;
+
+type LodContext = {
+  camera: PerspectiveCamera;
+  viewportHeight: number;
+};
 
 const colorFromTuple = (color?: Vec3Tuple): Color => {
   if (!color) {
@@ -85,25 +91,51 @@ const buildMesh = (output: Extract<ModuleOutput, { kind: "mesh" }>) => {
   return mesh;
 };
 
-const buildVoxels = (output: Extract<ModuleOutput, { kind: "voxels" }>) => {
+const buildVoxels = (
+  output: Extract<ModuleOutput, { kind: "voxels" }>,
+  lodContext?: LodContext
+) => {
   const positions = ensureFloat32Array(output.voxels.positions);
-  const voxelCount = positions.length / 3;
+  let cubePositions = positions;
+  let farPositions: Float32Array | null = null;
+  const renderMode = output.voxels.renderMode ?? "cubes";
+  const lod = output.voxels.lod;
+  const lodActive = lod?.mode === "camera" && renderMode === "cubes" && lodContext;
+  if (lodActive) {
+    const pixelThreshold = lod.pixelThreshold ?? 2;
+    const camera = lodContext.camera;
+    const fov = (camera.fov * Math.PI) / 180;
+    const scale = lodContext.viewportHeight / (2 * Math.tan(fov * 0.5));
+    const near: number[] = [];
+    const far: number[] = [];
+    for (let i = 0; i < positions.length; i += 3) {
+      const dx = positions[i] - camera.position.x;
+      const dy = positions[i + 1] - camera.position.y;
+      const dz = positions[i + 2] - camera.position.z;
+      const distance = Math.max(0.0001, Math.sqrt(dx * dx + dy * dy + dz * dz));
+      const pixelSize = (output.voxels.voxelSize * scale) / distance;
+      if (pixelSize >= pixelThreshold) {
+        near.push(positions[i], positions[i + 1], positions[i + 2]);
+      } else {
+        far.push(positions[i], positions[i + 1], positions[i + 2]);
+      }
+    }
+    cubePositions = new Float32Array(near);
+    farPositions = far.length > 0 ? new Float32Array(far) : null;
+  }
+  const voxelCount = cubePositions.length / 3;
   const chunkSize =
     output.voxels.chunkSize && output.voxels.chunkSize > 0
       ? output.voxels.chunkSize
       : voxelCount;
-  const renderMode = output.voxels.renderMode ?? "cubes";
   const group = new Group();
   group.name = output.label ?? "voxels";
-
-  if (renderMode === "points") {
-    const material = new PointsMaterial({
-      color: colorFromTuple(output.voxels.color),
-      size: output.voxels.pointSize ?? output.voxels.voxelSize * 0.5
-    });
-    for (let start = 0; start < voxelCount; start += chunkSize) {
-      const end = Math.min(start + chunkSize, voxelCount);
-      const slice = positions.subarray(start * 3, end * 3);
+  const addPoints = (pointsPositions: Float32Array, material: PointsMaterial) => {
+    const pointCount = pointsPositions.length / 3;
+    const pointChunk = chunkSize > 0 ? chunkSize : pointCount;
+    for (let start = 0; start < pointCount; start += pointChunk) {
+      const end = Math.min(start + pointChunk, pointCount);
+      const slice = pointsPositions.subarray(start * 3, end * 3);
       const geometry = new BufferGeometry();
       geometry.setAttribute("position", new BufferAttribute(slice, 3));
       geometry.computeBoundingBox();
@@ -112,6 +144,14 @@ const buildVoxels = (output: Extract<ModuleOutput, { kind: "voxels" }>) => {
       points.name = output.label ?? "voxels-points";
       group.add(points);
     }
+  };
+
+  if (renderMode === "points" && !lodActive) {
+    const material = new PointsMaterial({
+      color: colorFromTuple(output.voxels.color),
+      size: output.voxels.pointSize ?? output.voxels.voxelSize * 0.5
+    });
+    addPoints(positions, material);
     return group;
   }
 
@@ -131,7 +171,11 @@ const buildVoxels = (output: Extract<ModuleOutput, { kind: "voxels" }>) => {
   });
   const matrix = new Matrix4();
   const position = new Vector3();
-  const cubeChunk = Math.max(1, Math.min(chunkSize, voxelCount));
+  const maxInstancesPerMesh =
+    output.voxels.maxInstancesPerMesh && output.voxels.maxInstancesPerMesh > 0
+      ? output.voxels.maxInstancesPerMesh
+      : voxelCount;
+  const cubeChunk = Math.max(1, Math.min(chunkSize, maxInstancesPerMesh));
   if (LOG_VIEWER && chunkSize !== cubeChunk) {
     console.log(
       "[viewer] cube chunk clamped",
@@ -149,46 +193,110 @@ const buildVoxels = (output: Extract<ModuleOutput, { kind: "voxels" }>) => {
       node = (node.parent as typeof node) ?? null;
     }
   };
+  const totalMeshes = Math.ceil(voxelCount / maxInstancesPerMesh);
   const totalChunks = Math.ceil(voxelCount / cubeChunk);
+  if (totalMeshes > 1) {
+    console.info(
+      "[viewer] voxels cubes instancing",
+      `meshes=${totalMeshes}`,
+      `chunkSize=${cubeChunk}`,
+      `maxInstancesPerMesh=${maxInstancesPerMesh}`
+    );
+  }
   const buildToken = Symbol("voxels-cubes");
   group.userData.buildToken = buildToken;
   let next = 0;
-  const instanced = new InstancedMesh(geometry, material, voxelCount);
-  instanced.count = voxelCount;
-  instanced.instanceMatrix.setUsage(DynamicDrawUsage);
-  instanced.frustumCulled = false;
-  instanced.name = output.label ?? "voxels";
-  group.add(instanced);
+  const instancedMeshes: InstancedMesh[] = [];
+  for (let meshIndex = 0; meshIndex < totalMeshes; meshIndex += 1) {
+    const start = meshIndex * maxInstancesPerMesh;
+    const count = Math.min(maxInstancesPerMesh, voxelCount - start);
+    const instanced = new InstancedMesh(geometry, material, count);
+    instanced.count = count;
+    instanced.instanceMatrix.setUsage(DynamicDrawUsage);
+    instanced.frustumCulled = false;
+    instanced.name = output.label ?? "voxels";
+    instancedMeshes.push(instanced);
+    group.add(instanced);
+  }
+  let skippedWrites = 0;
   const buildStep = () => {
     if (group.userData.buildToken !== buildToken) {
       return;
     }
     const frameStart = performance.now();
+    const updated = new Set<number>();
+    const maxWritten: number[] = [];
     while (next < voxelCount && performance.now() - frameStart < 8) {
       const end = Math.min(next + cubeChunk, voxelCount);
       for (let i = next; i < end; i += 1) {
         const index = i * 3;
-        position.set(positions[index], positions[index + 1], positions[index + 2]);
+        position.set(cubePositions[index], cubePositions[index + 1], cubePositions[index + 2]);
         matrix.makeTranslation(position.x, position.y, position.z);
-        instanced.setMatrixAt(i, matrix);
+        const meshIndex = Math.floor(i / maxInstancesPerMesh);
+        const localIndex = i - meshIndex * maxInstancesPerMesh;
+        const instanced = instancedMeshes[meshIndex];
+        if (!instanced || localIndex >= instanced.count) {
+          skippedWrites += 1;
+          continue;
+        }
+        instanced.setMatrixAt(localIndex, matrix);
+        updated.add(meshIndex);
+        const current = maxWritten[meshIndex] ?? -1;
+        if (localIndex > current) {
+          maxWritten[meshIndex] = localIndex;
+        }
       }
+      next = end;
+    }
+    for (const meshIndex of updated) {
+      const instanced = instancedMeshes[meshIndex];
+      const maxIndex = maxWritten[meshIndex] ?? instanced.count - 1;
+      const start = 0;
+      const count = (maxIndex + 1) * 16;
+      const maxElements = instanced.instanceMatrix.array.length;
+      if (count <= 0 || start + count > maxElements) {
+        if (LOG_VIEWER) {
+          console.warn(
+            "[viewer] voxels cubes instancing",
+            `updateRange invalid mesh=${meshIndex}`,
+            `start=${start}`,
+            `count=${count}`,
+            `max=${maxElements}`
+          );
+        }
+        instanced.instanceMatrix.needsUpdate = true;
+        continue;
+      }
+      instanced.instanceMatrix.clearUpdateRanges();
+      instanced.instanceMatrix.addUpdateRange(start, count);
       instanced.instanceMatrix.needsUpdate = true;
+    }
+    if (updated.size > 0) {
       const onChunkAdded = group.userData.onChunkAdded as undefined | (() => void);
       onChunkAdded?.();
       markSceneUpdate();
-      next = end;
+    }
+    if (skippedWrites > 0 && LOG_VIEWER) {
+      console.warn(
+        "[viewer] voxels cubes instancing",
+        `skippedWrites=${skippedWrites}`
+      );
+      skippedWrites = 0;
     }
     if (next < voxelCount) {
       requestAnimationFrame(buildStep);
     } else if (voxelCount > 0) {
-      instanced.computeBoundingBox();
-      instanced.computeBoundingSphere();
+      for (const instanced of instancedMeshes) {
+        instanced.computeBoundingBox();
+        instanced.computeBoundingSphere();
+      }
       const buildMs = performance.now() - buildStart;
       if (LOG_VIEWER) {
         console.log(
           "[viewer] voxels cubes complete",
           `voxels=${voxelCount}`,
           `chunks=${totalChunks}`,
+          `meshes=${totalMeshes}`,
           `ms=${buildMs.toFixed(1)}`
         );
       }
@@ -198,6 +306,13 @@ const buildVoxels = (output: Extract<ModuleOutput, { kind: "voxels" }>) => {
   };
   if (voxelCount > 0) {
     buildStep();
+  }
+  if (lodActive && farPositions && farPositions.length > 0) {
+    const pointsMaterial = new PointsMaterial({
+      color: voxelColor,
+      size: output.voxels.pointSize ?? output.voxels.voxelSize * 0.5
+    });
+    addPoints(farPositions, pointsMaterial);
   }
   return group;
 };
@@ -240,7 +355,10 @@ const buildTexture = (output: Extract<ModuleOutput, { kind: "texture2d" }>) => {
   return texture;
 };
 
-export const buildOutputObject = (output: ModuleOutput): {
+export const buildOutputObject = (
+  output: ModuleOutput,
+  lodContext?: LodContext
+): {
   object: Group | Mesh | Points | LineSegments | InstancedMesh | Sprite;
   texture?: Texture;
 } => {
@@ -248,7 +366,7 @@ export const buildOutputObject = (output: ModuleOutput): {
     case "mesh":
       return { object: buildMesh(output) };
     case "voxels":
-      return { object: buildVoxels(output) };
+      return { object: buildVoxels(output, lodContext) };
     case "lines":
       return { object: buildLines(output) };
     case "points":
