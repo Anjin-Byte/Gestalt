@@ -13,3 +13,5 @@ apps/web/src/wasm/wasm_obj_loader/*
 !apps/web/src/wasm/wasm_obj_loader/wasm_obj_loader.js
 apps/web/src/wasm/wasm_webgpu_demo/*
 !apps/web/src/wasm/wasm_webgpu_demo/wasm_webgpu_demo.js
+target
+**/target
