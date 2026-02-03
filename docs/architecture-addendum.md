@@ -1143,17 +1143,48 @@ export interface VoxelMeshWasm {
 
 ### Conversion Functions
 
+> **Updated by ADR-0008**: Added epsilon tolerance to prevent floating-point boundary errors.
+
 ```rust
 /// Chunk size for binary greedy meshing (64³ with 1-voxel padding = 62³ usable)
 pub const CHUNK_SIZE: u32 = 64;
 pub const CHUNK_SIZE_USABLE: u32 = 62;  // After padding
 
-/// World position → Voxel index
+/// Epsilon for floating-point comparisons (prevents off-by-one at boundaries)
+const COORD_EPSILON: f32 = 1e-5;
+
+/// Robust floor that handles values very close to integers
+#[inline]
+fn robust_floor(x: f32) -> i32 {
+    let rounded = x.round();
+    if (x - rounded).abs() < COORD_EPSILON {
+        rounded as i32
+    } else {
+        x.floor() as i32
+    }
+}
+
+/// World position → Voxel index (with robust rounding)
 pub fn world_to_voxel(pos: [f32; 3], voxel_size: f32) -> [i32; 3] {
+    let inv_size = 1.0 / voxel_size;
     [
-        (pos[0] / voxel_size).floor() as i32,
-        (pos[1] / voxel_size).floor() as i32,
-        (pos[2] / voxel_size).floor() as i32,
+        robust_floor(pos[0] * inv_size),
+        robust_floor(pos[1] * inv_size),
+        robust_floor(pos[2] * inv_size),
+    ]
+}
+
+/// World position → Voxel index with explicit origin offset
+pub fn world_to_voxel_with_origin(
+    pos: [f32; 3],
+    voxel_size: f32,
+    world_origin: [f32; 3],
+) -> [i32; 3] {
+    let inv_size = 1.0 / voxel_size;
+    [
+        robust_floor((pos[0] - world_origin[0]) * inv_size),
+        robust_floor((pos[1] - world_origin[1]) * inv_size),
+        robust_floor((pos[2] - world_origin[2]) * inv_size),
     ]
 }
 

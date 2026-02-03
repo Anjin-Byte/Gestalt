@@ -764,3 +764,332 @@ This system ensures:
 - Frame rate stability (budgeted processing)
 - Data consistency (version checking)
 - Debuggability (comprehensive stats)
+
+---
+
+## 8. Backpressure Strategy
+
+> **Added by ADR-0008**: Prevents unbounded queue growth under rapid edits.
+
+### 8.1 Configuration
+
+```rust
+pub struct BackpressureConfig {
+    /// Coalesce edits within this window (ms)
+    pub coalesce_window_ms: f64,
+    /// Maximum pending rebuilds before dropping
+    pub max_queue_depth: usize,
+    /// Drop strategy when queue full
+    pub drop_policy: DropPolicy,
+}
+
+pub enum DropPolicy {
+    /// Drop oldest (FIFO)
+    Oldest,
+    /// Drop chunk farthest from camera
+    Farthest,
+    /// Drop lowest priority
+    LowestPriority,
+}
+
+impl Default for BackpressureConfig {
+    fn default() -> Self {
+        Self {
+            coalesce_window_ms: 16.0,  // ~1 frame
+            max_queue_depth: 64,
+            drop_policy: DropPolicy::Farthest,
+        }
+    }
+}
+```
+
+### 8.2 Edit Coalescing
+
+```rust
+impl ChunkManager {
+    /// Coalesce rapid edits to reduce rebuild churn
+    pub fn mark_dirty_coalesced(&mut self, coord: ChunkCoord) {
+        let now = self.current_time_ms();
+
+        if let Some(pending) = self.pending_edits.get_mut(&coord) {
+            // Extend existing pending edit
+            pending.edit_count += 1;
+        } else {
+            // Start new coalesce window
+            self.pending_edits.insert(coord, PendingEdit {
+                first_edit: now,
+                edit_count: 1,
+            });
+        }
+    }
+
+    /// Flush coalesced edits that have aged out
+    pub fn flush_coalesced_edits(&mut self) {
+        let now = self.current_time_ms();
+        let window = self.backpressure.coalesce_window_ms;
+
+        let ready: Vec<_> = self.pending_edits
+            .iter()
+            .filter(|(_, e)| now - e.first_edit >= window)
+            .map(|(c, _)| *c)
+            .collect();
+
+        for coord in ready {
+            self.pending_edits.remove(&coord);
+            self.enqueue_with_backpressure(coord);
+        }
+    }
+}
+```
+
+### 8.3 Queue Depth Limit
+
+```rust
+impl ChunkManager {
+    fn enqueue_with_backpressure(&mut self, coord: ChunkCoord) {
+        // Apply backpressure if queue is full
+        while self.rebuild_queue.len() >= self.backpressure.max_queue_depth {
+            let dropped = match self.backpressure.drop_policy {
+                DropPolicy::Oldest => self.rebuild_queue.pop_oldest(),
+                DropPolicy::Farthest => self.rebuild_queue.pop_farthest(self.camera_pos),
+                DropPolicy::LowestPriority => self.rebuild_queue.pop(), // Already lowest
+            };
+
+            if let Some(dropped) = dropped {
+                log::debug!("Backpressure: dropped chunk {:?}", dropped.coord);
+            }
+        }
+
+        // Now safe to enqueue
+        let priority = self.calculate_priority(coord, self.camera_pos);
+        if let Some(chunk) = self.chunks.get(&coord) {
+            self.rebuild_queue.enqueue(coord, priority, chunk.data_version);
+        }
+    }
+}
+```
+
+---
+
+## 9. Async Meshing Snapshots
+
+> **Added by ADR-0008**: Prevents data races during off-thread meshing.
+
+### 9.1 Chunk Snapshot
+
+```rust
+/// Immutable snapshot for async meshing
+#[derive(Clone)]
+pub struct ChunkSnapshot {
+    pub coord: ChunkCoord,
+    pub opaque_mask: Box<[u64; CS_P2]>,
+    pub materials: Box<[MaterialId; CS_P3]>,
+    pub version: u64,
+}
+
+impl ChunkSnapshot {
+    /// Memory size for budgeting
+    pub const SIZE_BYTES: usize =
+        std::mem::size_of::<ChunkCoord>() +
+        CS_P2 * 8 +  // opaque_mask
+        CS_P3 * 2 +  // materials (u16)
+        8;           // version
+
+    pub fn from_chunk(chunk: &Chunk) -> Self {
+        Self {
+            coord: chunk.coord,
+            opaque_mask: Box::new(chunk.opaque_mask),
+            materials: Box::new(chunk.materials),
+            version: chunk.data_version,
+        }
+    }
+}
+```
+
+### 9.2 Worker Protocol
+
+```rust
+impl ChunkManager {
+    /// Dispatch mesh job to worker
+    pub fn dispatch_async_mesh(&mut self, coord: ChunkCoord) {
+        let Some(chunk) = self.chunks.get_mut(&coord) else { return };
+
+        // Take snapshot (copies data)
+        let snapshot = ChunkSnapshot::from_chunk(chunk);
+
+        // Transition to meshing state
+        chunk.state = ChunkState::Meshing {
+            data_version: snapshot.version,
+        };
+
+        // Send to worker pool
+        self.worker_pool.submit(MeshJob {
+            snapshot,
+            neighbors: self.get_neighbor_boundaries(coord),
+        });
+    }
+
+    /// Handle completed mesh job
+    pub fn handle_mesh_complete(&mut self, result: MeshJobResult) {
+        let Some(chunk) = self.chunks.get_mut(&result.coord) else { return };
+
+        // Version check - discard if chunk modified during meshing
+        match chunk.state {
+            ChunkState::Meshing { data_version } if data_version == result.version => {
+                // Version matches - accept result
+                chunk.pending_mesh = Some(result.mesh);
+                chunk.state = ChunkState::ReadyToSwap {
+                    data_version: result.version,
+                };
+            }
+            _ => {
+                // Version mismatch or wrong state - discard and re-queue
+                log::debug!("Discarding stale mesh for {:?}", result.coord);
+                self.dirty_tracker.mark_dirty(result.coord);
+            }
+        }
+    }
+}
+```
+
+---
+
+## 10. Sparse Chunk Storage
+
+> **Added by ADR-0008**: Reduces memory for sparse worlds.
+
+### 10.1 Hybrid Storage
+
+```rust
+/// Adaptive storage based on fill ratio
+pub enum ChunkStorage {
+    /// Dense: fill ratio >= 10%
+    Dense(BinaryChunk),
+    /// Sparse: fill ratio < 10%
+    Sparse(SparseChunk),
+    /// Empty: no voxels
+    Empty,
+}
+
+pub struct SparseChunk {
+    /// Packed position -> material
+    voxels: HashMap<u32, MaterialId>,
+}
+
+impl SparseChunk {
+    const SPARSE_THRESHOLD: f32 = 0.10;
+
+    fn pack_pos(x: usize, y: usize, z: usize) -> u32 {
+        (x + y * CS + z * CS * CS) as u32
+    }
+
+    /// Convert to dense for meshing
+    pub fn to_dense(&self) -> BinaryChunk {
+        let mut chunk = BinaryChunk::new();
+        for (&pos, &mat) in &self.voxels {
+            let x = (pos % CS as u32) as usize;
+            let y = ((pos / CS as u32) % CS as u32) as usize;
+            let z = (pos / (CS * CS) as u32) as usize;
+            chunk.set(x + 1, y + 1, z + 1, mat);
+        }
+        chunk
+    }
+
+    pub fn memory_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.voxels.len() * 6
+    }
+}
+
+impl ChunkStorage {
+    pub fn from_dense(chunk: &BinaryChunk) -> Self {
+        let solid_count: usize = chunk.opaque_mask.iter()
+            .map(|col| col.count_ones() as usize)
+            .sum();
+
+        if solid_count == 0 {
+            ChunkStorage::Empty
+        } else if (solid_count as f32 / (CS * CS * CS) as f32) < SparseChunk::SPARSE_THRESHOLD {
+            // Convert to sparse
+            let mut sparse = SparseChunk { voxels: HashMap::new() };
+            // ... populate from dense
+            ChunkStorage::Sparse(sparse)
+        } else {
+            ChunkStorage::Dense(chunk.clone())
+        }
+    }
+}
+```
+
+---
+
+## 11. Missing Neighbor Policy
+
+> **Added by ADR-0008**: Handles chunk boundaries during streaming.
+
+### 11.1 Neighbor State
+
+```rust
+pub enum NeighborState {
+    /// Neighbor chunk is loaded
+    Loaded(ChunkCoord),
+    /// Known to be empty (no voxels)
+    Empty,
+    /// Not yet loaded
+    Unknown,
+}
+
+pub struct BoundaryPolicy {
+    /// How to handle unknown neighbors
+    pub unknown_neighbor: UnknownNeighborPolicy,
+}
+
+pub enum UnknownNeighborPolicy {
+    /// Defer meshing until neighbor loads (no boundary holes)
+    Defer,
+    /// Assume solid (conservative - no false faces)
+    AssumeSolid,
+    /// Assume empty (optimistic - may show temporary faces)
+    AssumeEmpty,
+}
+```
+
+### 11.2 Mesh Eligibility
+
+```rust
+impl ChunkManager {
+    /// Check if chunk can be meshed (all neighbors known)
+    pub fn can_mesh(&self, coord: ChunkCoord) -> bool {
+        if self.boundary_policy.unknown_neighbor != UnknownNeighborPolicy::Defer {
+            return true;
+        }
+
+        // Check all 6 neighbors
+        for neighbor_coord in coord.neighbors() {
+            let state = self.get_neighbor_state(coord, neighbor_coord);
+            if matches!(state, NeighborState::Unknown) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Called when a neighbor finishes loading
+    pub fn on_neighbor_loaded(&mut self, loaded_coord: ChunkCoord) {
+        // Check if any waiting chunks can now mesh
+        for neighbor_coord in loaded_coord.neighbors() {
+            if let Some(chunk) = self.chunks.get(&neighbor_coord) {
+                if chunk.state == ChunkState::WaitingForNeighbors && self.can_mesh(neighbor_coord) {
+                    self.dirty_tracker.mark_dirty(neighbor_coord);
+                }
+            }
+        }
+    }
+}
+```
+
+---
+
+## References
+
+- [ADR-0008](adr/0008-design-gap-mitigations.md) - Design gap mitigations
+- [typescript-architecture.md](typescript-architecture.md) - TypeScript state patterns

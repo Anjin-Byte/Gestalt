@@ -65,6 +65,7 @@ Quick navigation for the voxel-to-mesh rendering architecture.
 | [ADR-0005](adr/0005-voxelizer-to-mesher-integration.md) | Voxelizer to mesher integration | Proposed |
 | [ADR-0006](adr/0006-lod-strategy.md) | Level of Detail (LOD) strategy | Proposed |
 | [ADR-0007](adr/0007-material-strategy.md) | Material strategy (textures, per-voxel) | Proposed |
+| [ADR-0008](adr/0008-design-gap-mitigations.md) | Design gap mitigations (12 issues) | Proposed |
 
 ---
 
@@ -107,6 +108,11 @@ Quick navigation for the voxel-to-mesh rendering architecture.
 1. [ADR-0007](adr/0007-material-strategy.md) - Material strategy decision
 2. [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md) - UV generation context
 3. [typescript-architecture.md](typescript-architecture.md#resource-lifecycle) - Three.js resource management
+
+### Reviewing design robustness?
+1. [ADR-0008](adr/0008-design-gap-mitigations.md) - **Start here**: All 12 gap mitigations
+2. [chunk-management-system.md](chunk-management-system.md#8-backpressure-strategy) - Backpressure, snapshots
+3. [threejs-buffer-management.md](threejs-buffer-management.md#9-true-preallocation-with-tiered-pools) - Corrected preallocation
 
 ---
 
@@ -227,6 +233,11 @@ See [greedy-mesher-crate-structure.md](greedy-mesher-crate-structure.md) for det
 
 | Date | Change |
 |------|--------|
+| 2026-02-03 | Created ADR-0008 documenting 12 design gap mitigations (memory, backpressure, snapshots, etc.) |
+| 2026-02-03 | Updated chunk-management-system.md with backpressure, snapshots, sparse storage, neighbor policy |
+| 2026-02-03 | Updated threejs-buffer-management.md with true preallocation (tiered pools) |
+| 2026-02-03 | Updated architecture-addendum.md with robust coordinate conversion (epsilon tolerance) |
+| 2026-02-03 | Updated implementation-plan.md with worker-ready API design note |
 | 2026-02-03 | Created ADR-0007 documenting material strategy (textures, per-voxel materials) |
 | 2026-02-03 | Created typescript-architecture.md (branded types, state machines, debugging) |
 | 2026-02-03 | Created greedy-mesher-crate-structure.md (Rust crate organization) |

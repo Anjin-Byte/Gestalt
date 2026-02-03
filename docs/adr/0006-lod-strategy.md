@@ -250,31 +250,6 @@ LOD 2: 256³ super-chunks (64 chunks merged, decimated to 64³)
 
 ---
 
-### Option E: Distance-Based Point Size
-
-Single representation (points), scale point size by distance.
-
-```typescript
-const material = new THREE.PointsMaterial({
-  size: voxelSize,
-  sizeAttenuation: true,  // Automatic distance scaling
-});
-```
-
-**Pros:**
-- Simplest implementation
-- No LOD transitions needed
-- Works well for visualization/preview
-
-**Cons:**
-- Points can't represent surface detail
-- Interior voxels visible (no face culling benefit)
-- Not suitable for final rendering
-
-**Verdict:** ❌ Only for preview mode, not production LOD
-
----
-
 ## Decision
 
 Adopt **Option C: Point Mode for Distant Chunks** as the Phase 5 LOD implementation.

@@ -788,3 +788,267 @@ function getRenderStats(renderer: WebGLRenderer): RenderStats {
 3. **DrawRange for dynamic data**: Preallocate, then limit visible range
 4. **Double buffering**: Build new geometry before swapping
 5. **Clipping planes**: Slice without geometry rebuild
+
+---
+
+## 9. True Preallocation with Tiered Pools
+
+> **Added by ADR-0008**: The `ChunkMeshPool` in Section 2 creates new `BufferGeometry` on each update, which contradicts the preallocation principle. This section provides the corrected implementation.
+
+### 9.1 Size Tiers
+
+Different chunks have different complexity. Use tiered pools to avoid over-allocating.
+
+```typescript
+interface SizeTier {
+  maxVertices: number;
+  maxIndices: number;
+  /** Preallocated buffer count per tier */
+  initialPoolSize: number;
+}
+
+const SIZE_TIERS: SizeTier[] = [
+  { maxVertices: 1_000, maxIndices: 2_000, initialPoolSize: 16 },      // Simple
+  { maxVertices: 10_000, maxIndices: 20_000, initialPoolSize: 8 },    // Typical
+  { maxVertices: 50_000, maxIndices: 100_000, initialPoolSize: 4 },   // Complex
+  { maxVertices: 200_000, maxIndices: 400_000, initialPoolSize: 2 },  // Max (see Gap 1 cap)
+];
+```
+
+### 9.2 Preallocated Buffer Pool
+
+```typescript
+interface PreallocatedBuffer {
+  geometry: BufferGeometry;
+  mesh: Mesh;
+  tier: SizeTier;
+  usedVertices: number;
+  usedIndices: number;
+}
+
+class PreallocatedMeshPool {
+  private pools: Map<number, PreallocatedBuffer[]> = new Map();
+  private active: Map<ChunkId, PreallocatedBuffer> = new Map();
+  private group: Group;
+  private material: Material;
+
+  constructor(parentGroup: Group, material: Material) {
+    this.group = parentGroup;
+    this.material = material;
+    this.initializePools();
+  }
+
+  private initializePools(): void {
+    for (const tier of SIZE_TIERS) {
+      const pool: PreallocatedBuffer[] = [];
+
+      for (let i = 0; i < tier.initialPoolSize; i++) {
+        pool.push(this.createBuffer(tier));
+      }
+
+      this.pools.set(tier.maxVertices, pool);
+    }
+  }
+
+  private createBuffer(tier: SizeTier): PreallocatedBuffer {
+    const geometry = new BufferGeometry();
+
+    // Preallocate with DynamicDrawUsage for frequent updates
+    const positions = new Float32Array(tier.maxVertices * 3);
+    const normals = new Float32Array(tier.maxVertices * 3);
+    const indices = new Uint32Array(tier.maxIndices);
+
+    const posAttr = new BufferAttribute(positions, 3);
+    posAttr.setUsage(DynamicDrawUsage);
+    geometry.setAttribute('position', posAttr);
+
+    const normAttr = new BufferAttribute(normals, 3);
+    normAttr.setUsage(DynamicDrawUsage);
+    geometry.setAttribute('normal', normAttr);
+
+    const idxAttr = new BufferAttribute(indices, 1);
+    idxAttr.setUsage(DynamicDrawUsage);
+    geometry.setIndex(idxAttr);
+
+    // Start with zero draw range (invisible)
+    geometry.setDrawRange(0, 0);
+
+    const mesh = new Mesh(geometry, this.material);
+    mesh.frustumCulled = true;
+    mesh.visible = false;
+
+    return {
+      geometry,
+      mesh,
+      tier,
+      usedVertices: 0,
+      usedIndices: 0,
+    };
+  }
+
+  /**
+   * Acquire a buffer from pool for a chunk
+   */
+  acquire(chunkId: ChunkId, vertexCount: number, indexCount: number): PreallocatedBuffer | null {
+    // Find smallest tier that fits
+    const tier = SIZE_TIERS.find(
+      t => t.maxVertices >= vertexCount && t.maxIndices >= indexCount
+    );
+
+    if (!tier) {
+      console.warn(`Mesh too large for any tier: ${vertexCount} vertices, ${indexCount} indices`);
+      return null;
+    }
+
+    const pool = this.pools.get(tier.maxVertices)!;
+    let buffer = pool.pop();
+
+    if (!buffer) {
+      // Pool exhausted, create new (with warning in dev)
+      console.debug(`Pool exhausted for tier ${tier.maxVertices}, creating new buffer`);
+      buffer = this.createBuffer(tier);
+    }
+
+    this.active.set(chunkId, buffer);
+    this.group.add(buffer.mesh);
+    return buffer;
+  }
+
+  /**
+   * Update buffer contents WITHOUT reallocation
+   */
+  update(chunkId: ChunkId, data: ChunkMeshData): boolean {
+    let buffer = this.active.get(chunkId);
+
+    const vertexCount = data.positions.length / 3;
+    const indexCount = data.indices.length;
+
+    // Check if we need a different tier
+    if (buffer && (vertexCount > buffer.tier.maxVertices || indexCount > buffer.tier.maxIndices)) {
+      // Release current and acquire larger
+      this.release(chunkId);
+      buffer = undefined;
+    }
+
+    if (!buffer) {
+      buffer = this.acquire(chunkId, vertexCount, indexCount);
+      if (!buffer) return false;
+    }
+
+    // Update buffer contents IN PLACE (no reallocation!)
+    const posAttr = buffer.geometry.getAttribute('position') as BufferAttribute;
+    const normAttr = buffer.geometry.getAttribute('normal') as BufferAttribute;
+    const idxAttr = buffer.geometry.getIndex()!;
+
+    (posAttr.array as Float32Array).set(data.positions);
+    (normAttr.array as Float32Array).set(data.normals);
+    (idxAttr.array as Uint32Array).set(data.indices);
+
+    // Mark for GPU upload
+    posAttr.needsUpdate = true;
+    normAttr.needsUpdate = true;
+    idxAttr.needsUpdate = true;
+
+    // Update draw range to actual data size
+    buffer.geometry.setDrawRange(0, indexCount);
+    buffer.usedVertices = vertexCount;
+    buffer.usedIndices = indexCount;
+
+    // Update bounding volumes
+    buffer.geometry.computeBoundingBox();
+    buffer.geometry.computeBoundingSphere();
+
+    buffer.mesh.visible = true;
+    return true;
+  }
+
+  /**
+   * Release buffer back to pool
+   */
+  release(chunkId: ChunkId): void {
+    const buffer = this.active.get(chunkId);
+    if (!buffer) return;
+
+    // Hide and reset
+    buffer.mesh.visible = false;
+    buffer.geometry.setDrawRange(0, 0);
+    buffer.usedVertices = 0;
+    buffer.usedIndices = 0;
+
+    // Remove from scene
+    this.group.remove(buffer.mesh);
+
+    // Return to pool
+    this.pools.get(buffer.tier.maxVertices)!.push(buffer);
+    this.active.delete(chunkId);
+  }
+
+  /**
+   * Get memory statistics
+   */
+  getMemoryStats(): {
+    pooledBuffers: number;
+    activeBuffers: number;
+    totalAllocatedBytes: number;
+    totalUsedBytes: number;
+  } {
+    let pooledBuffers = 0;
+    let totalAllocatedBytes = 0;
+
+    for (const [tierMax, pool] of this.pools) {
+      const tier = SIZE_TIERS.find(t => t.maxVertices === tierMax)!;
+      pooledBuffers += pool.length;
+      const bytesPerBuffer = tier.maxVertices * 3 * 4 * 2 + tier.maxIndices * 4; // pos + norm + idx
+      totalAllocatedBytes += pool.length * bytesPerBuffer;
+    }
+
+    let totalUsedBytes = 0;
+    for (const buffer of this.active.values()) {
+      totalUsedBytes += buffer.usedVertices * 3 * 4 * 2 + buffer.usedIndices * 4;
+      const bytesPerBuffer = buffer.tier.maxVertices * 3 * 4 * 2 + buffer.tier.maxIndices * 4;
+      totalAllocatedBytes += bytesPerBuffer;
+    }
+
+    return {
+      pooledBuffers,
+      activeBuffers: this.active.size,
+      totalAllocatedBytes,
+      totalUsedBytes,
+    };
+  }
+
+  dispose(): void {
+    // Dispose all active
+    for (const buffer of this.active.values()) {
+      this.group.remove(buffer.mesh);
+      buffer.geometry.dispose();
+    }
+    this.active.clear();
+
+    // Dispose all pooled
+    for (const pool of this.pools.values()) {
+      for (const buffer of pool) {
+        buffer.geometry.dispose();
+      }
+    }
+    this.pools.clear();
+  }
+}
+```
+
+### 9.3 Comparison
+
+| Aspect | Original ChunkMeshPool | PreallocatedMeshPool |
+|--------|------------------------|----------------------|
+| Geometry creation | Every update | Once at pool init |
+| GPU buffer reuse | No | Yes |
+| GC pressure | High (new geometry each time) | Low (reuse buffers) |
+| Memory usage | Proportional to visible | Fixed + active |
+| Update cost | O(alloc + upload) | O(upload only) |
+
+---
+
+## References
+
+- [ADR-0008](adr/0008-design-gap-mitigations.md) - Design gap mitigations
+- [chunk-management-system.md](chunk-management-system.md) - Chunk state and rebuild scheduling

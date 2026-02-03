@@ -30,6 +30,15 @@
 > Uses bitwise operations to process 64 voxels per instruction.
 > See [Binary Greedy Meshing Analysis](binary-greedy-meshing-analysis.md) for algorithm details.
 
+> **Design Note (ADR-0008):** Although worker threading is implemented in Phase 5, the API
+> designed in Phase 1 must be **worker-ready**. All meshing functions should:
+> - Accept immutable snapshot data (not mutable references)
+> - Return owned results (not references to shared state)
+> - Be `Send + Sync` compatible for cross-thread use
+> - Use `async` TypeScript wrappers even for sync implementations
+>
+> This avoids architectural retrofit when workers are added later.
+
 ### 1.1 Milestone: Binary Data Structures
 
 **Deliverables:**
