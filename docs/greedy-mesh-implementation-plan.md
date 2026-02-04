@@ -49,30 +49,38 @@ pub const CS_P3: usize = CS_P * CS_P * CS_P;  // Total voxels
 ### Binary Chunk Representation
 
 ```rust
+/// 16-bit material identifier (see ADR-0007 for material strategy)
+pub type MaterialId = u16;
+
+/// Reserved material values
+pub const MATERIAL_EMPTY: MaterialId = 0;
+pub const MATERIAL_DEFAULT: MaterialId = 1;
+
 /// Binary representation of a chunk for fast meshing
 pub struct BinaryChunk {
     /// Opaque mask: one bit per voxel, organized as vertical columns
     /// opaque_mask[x * CS_P + z] contains 64 bits for the Y column at (x, z)
     pub opaque_mask: [u64; CS_P2],
 
-    /// Voxel types: material ID per voxel (only read for visible faces)
-    pub voxel_types: [u8; CS_P3],
+    /// Material IDs: 16-bit per voxel (only read for visible faces)
+    /// Supports 65536 materials for texture atlas indexing
+    pub materials: [MaterialId; CS_P3],
 }
 
 impl BinaryChunk {
     pub fn new() -> Self {
         Self {
             opaque_mask: [0u64; CS_P2],
-            voxel_types: [0u8; CS_P3],
+            materials: [MATERIAL_EMPTY; CS_P3],
         }
     }
 
     /// Set a voxel as solid with given material
     #[inline]
-    pub fn set(&mut self, x: usize, y: usize, z: usize, material: u8) {
+    pub fn set(&mut self, x: usize, y: usize, z: usize, material: MaterialId) {
         let column_idx = x * CS_P + z;
         self.opaque_mask[column_idx] |= 1u64 << y;
-        self.voxel_types[x * CS_P2 + y * CS_P + z] = material;
+        self.materials[x * CS_P2 + y * CS_P + z] = material;
     }
 
     /// Check if voxel is solid
@@ -84,8 +92,8 @@ impl BinaryChunk {
 
     /// Get material at position (only valid if solid)
     #[inline]
-    pub fn get_material(&self, x: usize, y: usize, z: usize) -> u8 {
-        self.voxel_types[x * CS_P2 + y * CS_P + z]
+    pub fn get_material(&self, x: usize, y: usize, z: usize) -> MaterialId {
+        self.materials[x * CS_P2 + y * CS_P + z]
     }
 }
 ```
@@ -158,6 +166,8 @@ pub fn unpack_quad(quad: u64) -> (u32, u32, u32, u32, u32, u32) {
 
 ```rust
 /// Output mesh data ready for Three.js BufferGeometry
+/// Includes UV coordinates and material IDs for texture atlas rendering
+/// See ADR-0007 for material strategy details
 #[derive(Default)]
 pub struct MeshOutput {
     /// Vertex positions (3 floats per vertex)
@@ -166,8 +176,12 @@ pub struct MeshOutput {
     pub normals: Vec<f32>,
     /// Triangle indices (3 indices per triangle)
     pub indices: Vec<u32>,
-    /// Optional: vertex colors (3 floats per vertex, RGB)
-    pub colors: Option<Vec<f32>>,
+    /// UV coordinates (2 floats per vertex)
+    /// Tiled appropriately for merged quads (4x3 quad = 4x3 UV tiles)
+    pub uvs: Vec<f32>,
+    /// Per-vertex material ID for shader lookup
+    /// All 4 vertices of a quad share the same material
+    pub material_ids: Vec<u16>,
 }
 
 impl MeshOutput {
@@ -177,6 +191,19 @@ impl MeshOutput {
 
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
+    }
+
+    /// Pre-allocate capacity for estimated quad count
+    pub fn with_capacity(estimated_quads: usize) -> Self {
+        let verts = estimated_quads * 4;
+        let tris = estimated_quads * 2;
+        Self {
+            positions: Vec::with_capacity(verts * 3),
+            normals: Vec::with_capacity(verts * 3),
+            indices: Vec::with_capacity(tris * 3),
+            uvs: Vec::with_capacity(verts * 2),
+            material_ids: Vec::with_capacity(verts),
+        }
     }
 }
 ```
@@ -191,19 +218,22 @@ Convert from various input formats to binary chunk representation.
 
 ```rust
 /// Convert voxel positions (Float32Array from JS) to binary chunk
+/// Uses robust_floor for accurate float-to-voxel conversion (see ADR-0008)
 pub fn positions_to_binary_chunk(
     positions: &[f32],
     voxel_size: f32,
     chunk_origin: [f32; 3],
-    material_id: u8,
+    material_id: MaterialId,
 ) -> BinaryChunk {
     let mut chunk = BinaryChunk::new();
+    let inv_voxel_size = 1.0 / voxel_size;
 
     for pos in positions.chunks_exact(3) {
         // Convert world position to chunk-local voxel coordinates
-        let x = ((pos[0] - chunk_origin[0]) / voxel_size) as usize + 1; // +1 for padding
-        let y = ((pos[1] - chunk_origin[1]) / voxel_size) as usize + 1;
-        let z = ((pos[2] - chunk_origin[2]) / voxel_size) as usize + 1;
+        // Use robust_floor to handle floating point edge cases
+        let x = robust_floor((pos[0] - chunk_origin[0]) * inv_voxel_size) as usize + 1;
+        let y = robust_floor((pos[1] - chunk_origin[1]) * inv_voxel_size) as usize + 1;
+        let z = robust_floor((pos[2] - chunk_origin[2]) * inv_voxel_size) as usize + 1;
 
         if x < CS_P - 1 && y < CS_P - 1 && z < CS_P - 1 {
             chunk.set(x, y, z, material_id);
@@ -212,14 +242,27 @@ pub fn positions_to_binary_chunk(
 
     chunk
 }
+
+/// Robust floor that handles values very close to integers
+const COORD_EPSILON: f32 = 1e-5;
+
+fn robust_floor(value: f32) -> i32 {
+    let rounded = value.round();
+    if (value - rounded).abs() < COORD_EPSILON {
+        rounded as i32
+    } else {
+        value.floor() as i32
+    }
+}
 ```
 
 ### From Dense Voxel Array
 
 ```rust
 /// Convert dense voxel array to binary chunk
+/// Supports 16-bit material IDs for full texture atlas range
 pub fn dense_to_binary_chunk(
-    voxels: &[u8],  // material_id per voxel, 0 = empty
+    voxels: &[u16],  // 16-bit material_id per voxel, 0 = empty
     dims: [usize; 3],
 ) -> BinaryChunk {
     let mut chunk = BinaryChunk::new();
@@ -230,7 +273,7 @@ pub fn dense_to_binary_chunk(
                 let src_idx = z * dims[1] * dims[0] + y * dims[0] + x;
                 let material = voxels[src_idx];
 
-                if material != 0 {
+                if material != MATERIAL_EMPTY {
                     // +1 offset for padding
                     chunk.set(x + 1, y + 1, z + 1, material);
                 }
@@ -682,24 +725,27 @@ pub fn mesh_chunk(chunk: &BinaryChunk, voxel_size: f32, origin: [f32; 3]) -> Mes
 ### Quad Expansion (for Three.js Compatibility)
 
 ```rust
-/// Expand packed quads into standard vertex/index arrays
+/// Expand packed quads into standard vertex/index arrays with UVs
 fn expand_quads_to_mesh(
     packed_quads: &[Vec<u64>; 6],
     voxel_size: f32,
     origin: [f32; 3],
 ) -> MeshOutput {
-    let mut output = MeshOutput::default();
+    // Estimate total quads for pre-allocation
+    let total_quads: usize = packed_quads.iter().map(|q| q.len()).sum();
+    let mut output = MeshOutput::with_capacity(total_quads);
 
     for (face, quads) in packed_quads.iter().enumerate() {
         let normal = FACE_NORMALS[face];
 
         for &quad in quads {
-            let (x, y, z, w, h, _material) = unpack_quad(quad);
+            let (x, y, z, w, h, material) = unpack_quad(quad);
 
             emit_expanded_quad(
                 face,
                 x, y, z,
                 w, h,
+                material as MaterialId,
                 &normal,
                 voxel_size,
                 origin,
@@ -711,11 +757,13 @@ fn expand_quads_to_mesh(
     output
 }
 
-/// Emit a single quad as 4 vertices and 6 indices
+/// Emit a single quad as 4 vertices with UVs and 6 indices
+/// UVs tile based on quad dimensions (a 4x3 quad tiles texture 4x3 times)
 fn emit_expanded_quad(
     face: usize,
     x: u32, y: u32, z: u32,
     width: u32, height: u32,
+    material: MaterialId,
     normal: &[f32; 3],
     voxel_size: f32,
     origin: [f32; 3],
@@ -732,51 +780,77 @@ fn emit_expanded_quad(
     let w = width as f32 * voxel_size;
     let h = height as f32 * voxel_size;
 
+    // UV tiling: quad dimensions determine how many times texture repeats
+    // Shader uses fract(uv) to handle tiling and material_id for atlas lookup
+    let u_tiles = width as f32;
+    let v_tiles = height as f32;
+
     // Generate 4 corners based on face direction
-    let corners: [[f32; 3]; 4] = match face {
-        FACE_POS_Y => [
-            [bx, by + voxel_size, bz],
-            [bx + w, by + voxel_size, bz],
-            [bx + w, by + voxel_size, bz + h],
-            [bx, by + voxel_size, bz + h],
-        ],
-        FACE_NEG_Y => [
-            [bx, by, bz],
-            [bx, by, bz + h],
-            [bx + w, by, bz + h],
-            [bx + w, by, bz],
-        ],
-        FACE_POS_X => [
-            [bx + voxel_size, by, bz],
-            [bx + voxel_size, by + h, bz],
-            [bx + voxel_size, by + h, bz + w],
-            [bx + voxel_size, by, bz + w],
-        ],
-        FACE_NEG_X => [
-            [bx, by, bz],
-            [bx, by, bz + w],
-            [bx, by + h, bz + w],
-            [bx, by + h, bz],
-        ],
-        FACE_POS_Z => [
-            [bx, by, bz + voxel_size],
-            [bx + w, by, bz + voxel_size],
-            [bx + w, by + h, bz + voxel_size],
-            [bx, by + h, bz + voxel_size],
-        ],
-        FACE_NEG_Z => [
-            [bx, by, bz],
-            [bx, by + h, bz],
-            [bx + w, by + h, bz],
-            [bx + w, by, bz],
-        ],
+    // Each face has consistent UV mapping: (0,0) -> (u_tiles, v_tiles)
+    let (corners, uvs): ([[f32; 3]; 4], [[f32; 2]; 4]) = match face {
+        FACE_POS_Y => (
+            [
+                [bx, by + voxel_size, bz],
+                [bx + w, by + voxel_size, bz],
+                [bx + w, by + voxel_size, bz + h],
+                [bx, by + voxel_size, bz + h],
+            ],
+            [[0.0, 0.0], [u_tiles, 0.0], [u_tiles, v_tiles], [0.0, v_tiles]],
+        ),
+        FACE_NEG_Y => (
+            [
+                [bx, by, bz],
+                [bx, by, bz + h],
+                [bx + w, by, bz + h],
+                [bx + w, by, bz],
+            ],
+            [[0.0, 0.0], [0.0, v_tiles], [u_tiles, v_tiles], [u_tiles, 0.0]],
+        ),
+        FACE_POS_X => (
+            [
+                [bx + voxel_size, by, bz],
+                [bx + voxel_size, by + h, bz],
+                [bx + voxel_size, by + h, bz + w],
+                [bx + voxel_size, by, bz + w],
+            ],
+            [[0.0, 0.0], [0.0, v_tiles], [u_tiles, v_tiles], [u_tiles, 0.0]],
+        ),
+        FACE_NEG_X => (
+            [
+                [bx, by, bz],
+                [bx, by, bz + w],
+                [bx, by + h, bz + w],
+                [bx, by + h, bz],
+            ],
+            [[0.0, 0.0], [u_tiles, 0.0], [u_tiles, v_tiles], [0.0, v_tiles]],
+        ),
+        FACE_POS_Z => (
+            [
+                [bx, by, bz + voxel_size],
+                [bx + w, by, bz + voxel_size],
+                [bx + w, by + h, bz + voxel_size],
+                [bx, by + h, bz + voxel_size],
+            ],
+            [[0.0, 0.0], [u_tiles, 0.0], [u_tiles, v_tiles], [0.0, v_tiles]],
+        ),
+        FACE_NEG_Z => (
+            [
+                [bx, by, bz],
+                [bx, by + h, bz],
+                [bx + w, by + h, bz],
+                [bx + w, by, bz],
+            ],
+            [[0.0, 0.0], [0.0, v_tiles], [u_tiles, v_tiles], [u_tiles, 0.0]],
+        ),
         _ => unreachable!(),
     };
 
-    // Add vertices
-    for corner in &corners {
-        output.positions.extend_from_slice(corner);
+    // Add vertices with positions, normals, UVs, and material IDs
+    for i in 0..4 {
+        output.positions.extend_from_slice(&corners[i]);
         output.normals.extend_from_slice(normal);
+        output.uvs.extend_from_slice(&uvs[i]);
+        output.material_ids.push(material);
     }
 
     // Add indices (two triangles, CCW winding)
@@ -798,11 +872,15 @@ fn emit_expanded_quad(
 ```rust
 use wasm_bindgen::prelude::*;
 
+/// Result of meshing operations, exposed to JavaScript
+/// Includes UV coordinates and material IDs for texture atlas rendering
 #[wasm_bindgen]
 pub struct VoxelMeshResult {
     positions: Vec<f32>,
     normals: Vec<f32>,
     indices: Vec<u32>,
+    uvs: Vec<f32>,
+    material_ids: Vec<u16>,
 }
 
 #[wasm_bindgen]
@@ -823,6 +901,16 @@ impl VoxelMeshResult {
     }
 
     #[wasm_bindgen(getter)]
+    pub fn uvs(&self) -> Vec<f32> {
+        self.uvs.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn material_ids(&self) -> Vec<u16> {
+        self.material_ids.clone()
+    }
+
+    #[wasm_bindgen(getter)]
     pub fn vertex_count(&self) -> usize {
         self.positions.len() / 3
     }
@@ -831,14 +919,20 @@ impl VoxelMeshResult {
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
     }
+
+    /// Check if mesh is empty (no geometry generated)
+    #[wasm_bindgen(getter)]
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
 }
 
-/// Mesh voxel positions into optimized geometry
+/// Mesh voxel positions into optimized geometry with UVs
 #[wasm_bindgen]
 pub fn mesh_voxel_positions(
-    positions: &[f32],  // Voxel center positions (x,y,z triples)
+    positions: &[f32],      // Voxel center positions (x,y,z triples)
     voxel_size: f32,
-    material_id: u8,
+    material_id: u16,       // 16-bit material ID
     origin_x: f32,
     origin_y: f32,
     origin_z: f32,
@@ -855,13 +949,15 @@ pub fn mesh_voxel_positions(
         positions: mesh.positions,
         normals: mesh.normals,
         indices: mesh.indices,
+        uvs: mesh.uvs,
+        material_ids: mesh.material_ids,
     }
 }
 
-/// Mesh dense voxel data
+/// Mesh dense voxel data with per-voxel materials
 #[wasm_bindgen]
 pub fn mesh_dense_voxels(
-    voxels: &[u8],  // Material ID per voxel (0 = empty)
+    voxels: &[u16],         // 16-bit material ID per voxel (0 = empty)
     width: u32,
     height: u32,
     depth: u32,
@@ -883,6 +979,8 @@ pub fn mesh_dense_voxels(
         positions: mesh.positions,
         normals: mesh.normals,
         indices: mesh.indices,
+        uvs: mesh.uvs,
+        material_ids: mesh.material_ids,
     }
 }
 ```
@@ -892,35 +990,144 @@ pub fn mesh_dense_voxels(
 ## Part 7: Three.js Integration
 
 ```typescript
+import {
+  BufferGeometry,
+  BufferAttribute,
+  Mesh,
+  ShaderMaterial,
+  DataArrayTexture,
+  DataTexture,
+  RGBAFormat,
+  UnsignedByteType,
+  FloatType,
+  NearestFilter,
+  RepeatWrapping,
+} from 'three';
+
+/** Mesh data returned from WASM */
 interface VoxelMeshData {
   positions: Float32Array;
   normals: Float32Array;
   indices: Uint32Array;
-  colors?: Float32Array;
+  uvs: Float32Array;
+  materialIds: Uint16Array;
 }
 
-function buildVoxelMesh(data: VoxelMeshData): Mesh {
+/** Build BufferGeometry from WASM mesh result */
+function buildVoxelGeometry(data: VoxelMeshData): BufferGeometry {
   const geometry = new BufferGeometry();
 
   geometry.setAttribute('position', new BufferAttribute(data.positions, 3));
   geometry.setAttribute('normal', new BufferAttribute(data.normals, 3));
-  geometry.setIndex(new BufferAttribute(data.indices, 1));
+  geometry.setAttribute('uv', new BufferAttribute(data.uvs, 2));
 
-  if (data.colors) {
-    geometry.setAttribute('color', new BufferAttribute(data.colors, 3));
+  // Material ID as float attribute for shader access
+  const materialIdFloat = new Float32Array(data.materialIds.length);
+  for (let i = 0; i < data.materialIds.length; i++) {
+    materialIdFloat[i] = data.materialIds[i];
   }
+  geometry.setAttribute('materialId', new BufferAttribute(materialIdFloat, 1));
 
+  geometry.setIndex(new BufferAttribute(data.indices, 1));
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
 
-  const material = new MeshStandardMaterial({
-    color: 0x7ad8ff,
-    roughness: 0.35,
-    metalness: 0.1,
-    vertexColors: Boolean(data.colors),
-    side: DoubleSide,
-  });
+  return geometry;
+}
 
+/**
+ * Voxel material shader for texture atlas rendering
+ * See ADR-0007 for complete material strategy
+ */
+function createVoxelMaterial(
+  atlas: DataArrayTexture,
+  materialData: DataTexture
+): ShaderMaterial {
+  return new ShaderMaterial({
+    uniforms: {
+      atlas: { value: atlas },
+      materialData: { value: materialData },
+      atlasLayerCount: { value: atlas.depth },
+      tilesPerLayer: { value: 256 }, // 16x16 tiles
+    },
+    vertexShader: `
+      attribute float materialId;
+
+      varying vec2 vUv;
+      varying float vMaterialId;
+      varying vec3 vNormal;
+      varying vec3 vWorldPosition;
+
+      void main() {
+        vUv = uv;
+        vMaterialId = materialId;
+        vNormal = normalize(normalMatrix * normal);
+
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPos.xyz;
+
+        gl_Position = projectionMatrix * viewMatrix * worldPos;
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      precision highp sampler2DArray;
+
+      uniform sampler2DArray atlas;
+      uniform sampler2D materialData;
+      uniform float atlasLayerCount;
+      uniform float tilesPerLayer;
+
+      varying vec2 vUv;
+      varying float vMaterialId;
+      varying vec3 vNormal;
+      varying vec3 vWorldPosition;
+
+      void main() {
+        // Look up material properties from data texture
+        // materialData layout: RGBA = (baseR, baseG, baseB, roughness)
+        float matLookup = (vMaterialId + 0.5) / 4096.0;
+        vec4 matProps = texture2D(materialData, vec2(matLookup, 0.5));
+
+        // Calculate atlas layer and tile position
+        float layer = floor(vMaterialId / tilesPerLayer);
+        float tileIndex = mod(vMaterialId, tilesPerLayer);
+        float tileX = mod(tileIndex, 16.0);
+        float tileY = floor(tileIndex / 16.0);
+
+        // Convert UV to atlas coordinates with tiling
+        vec2 tileSize = vec2(1.0 / 16.0);
+        vec2 tileOffset = vec2(tileX, tileY) * tileSize;
+        vec2 tiledUv = fract(vUv) * tileSize + tileOffset;
+
+        // Sample atlas texture
+        vec4 texColor = texture(atlas, vec3(tiledUv, layer));
+
+        // Combine base color with texture
+        vec3 baseColor = matProps.rgb;
+        vec3 finalColor = texColor.rgb * baseColor;
+
+        // Simple diffuse lighting
+        vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
+        float diffuse = max(dot(vNormal, lightDir), 0.0);
+        float ambient = 0.3;
+
+        finalColor *= (ambient + diffuse * 0.7);
+
+        gl_FragColor = vec4(finalColor, texColor.a);
+      }
+    `,
+  });
+}
+
+/** Build complete voxel mesh with material */
+function buildVoxelMesh(
+  data: VoxelMeshData,
+  atlas: DataArrayTexture,
+  materialData: DataTexture
+): Mesh {
+  const geometry = buildVoxelGeometry(data);
+  const material = createVoxelMaterial(atlas, materialData);
   return new Mesh(geometry, material);
 }
 ```
@@ -944,9 +1151,10 @@ Where n = chunk dimension (64).
 | Data | Size |
 |------|------|
 | Opaque mask | 64 × 64 × 8 = 32 KB |
-| Voxel types | 64³ = 256 KB |
+| Materials (16-bit) | 64³ × 2 = 512 KB |
 | Face masks | 6 × 32 KB = 192 KB |
 | Packed quads | ~8 bytes per quad |
+| **Total per chunk** | ~736 KB working memory |
 
 ### Benchmarks (Expected)
 

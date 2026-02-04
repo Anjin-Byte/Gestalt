@@ -148,10 +148,13 @@ All requirements are in [voxel-mesh-architecture.md](voxel-mesh-architecture.md)
 
 | Type | Purpose | Location |
 |------|---------|----------|
-| `BinaryChunk` | Bitmask + types storage | [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md#binary-chunk-representation) |
+| `MaterialId` | 16-bit material identifier (u16) | [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md#binary-chunk-representation) |
+| `BinaryChunk` | Bitmask + materials storage | [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md#binary-chunk-representation) |
 | `FaceMasks` | Visible face bits per direction | [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md#face-masks-storage) |
 | `ChunkState` | Clean/Dirty/Meshing/ReadyToSwap | [chunk-management-system.md](chunk-management-system.md) |
-| `MeshOutput` | positions/normals/indices | [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md#mesh-output) |
+| `MeshOutput` | positions/normals/indices/uvs/material_ids | [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md#mesh-output) |
+| `MaterialDef` | Material properties (color, roughness, texture) | [ADR-0007](adr/0007-material-strategy.md) |
+| `MaterialRegistry` | TypeScript material management | [ADR-0007](adr/0007-material-strategy.md#materialregistry-implementation) |
 | `VoxelMeshDescriptor` | TypeScript output type | [architecture-addendum.md](architecture-addendum.md#step-1-extend-type-definitions) |
 
 **Implemented (Voxelizer):**
@@ -233,6 +236,8 @@ See [greedy-mesher-crate-structure.md](greedy-mesher-crate-structure.md) for det
 
 | Date | Change |
 |------|--------|
+| 2026-02-03 | Resolved materials integration: updated greedy-mesh-implementation-plan.md with 16-bit MaterialId, UVs, material_ids in MeshOutput and WASM bindings |
+| 2026-02-03 | Expanded ADR-0007 with complete MaterialRegistry implementation, atlas loading, and shader integration |
 | 2026-02-03 | Created ADR-0008 documenting 12 design gap mitigations (memory, backpressure, snapshots, etc.) |
 | 2026-02-03 | Updated chunk-management-system.md with backpressure, snapshots, sparse storage, neighbor policy |
 | 2026-02-03 | Updated threejs-buffer-management.md with true preallocation (tiered pools) |

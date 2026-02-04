@@ -1,0 +1,17 @@
+[package]
+name = "greedy_mesher"
+version = "0.1.0"
+edition = "2021"
+description = "Binary greedy meshing for 64³ voxel chunks"
+license = "MIT"
+
+[dependencies]
+bytemuck = { version = "1.16", features = ["derive"] }
+
+# Benchmarks can be added in Phase 5
+# [dev-dependencies]
+# criterion = "0.5"
+#
+# [[bench]]
+# name = "meshing"
+# harness = false
