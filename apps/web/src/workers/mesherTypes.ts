@@ -57,3 +57,16 @@ export type MesherResponse =
   | { type: "mesh-done"; result: MeshJobResult }
   | { type: "mesh-error"; jobId: number; error: string }
   | { type: "progress"; jobId: number; stage: "generating" | "meshing" | "extracting" };
+
+// Re-export chunk manager types for combined worker protocol
+export type { ChunkManagerRequest, ChunkManagerResponse } from "./chunkManagerTypes";
+
+/** Combined request type for the shared worker (backward compatible). */
+export type WorkerRequest =
+  | MesherRequest
+  | import("./chunkManagerTypes").ChunkManagerRequest;
+
+/** Combined response type for the shared worker (backward compatible). */
+export type WorkerResponse =
+  | MesherResponse
+  | import("./chunkManagerTypes").ChunkManagerResponse;

@@ -45,6 +45,12 @@ pub struct ChunkManager {
 
     /// Memory budget and eviction thresholds.
     budget: MemoryBudget,
+
+    /// Coords that had meshes swapped during the last swap_pending_meshes() call.
+    last_swapped: Vec<ChunkCoord>,
+
+    /// Coords that were evicted during the last evict_to_budget() call.
+    last_evicted: Vec<ChunkCoord>,
 }
 
 impl ChunkManager {
@@ -62,6 +68,8 @@ impl ChunkManager {
             config,
             lru_tracker: LruTracker::new(),
             budget: MemoryBudget::default(),
+            last_swapped: Vec::new(),
+            last_evicted: Vec::new(),
         }
     }
 
@@ -74,6 +82,8 @@ impl ChunkManager {
             config,
             lru_tracker: LruTracker::new(),
             budget,
+            last_swapped: Vec::new(),
+            last_evicted: Vec::new(),
         }
     }
 
@@ -348,12 +358,23 @@ impl ChunkManager {
         self.budget = budget;
     }
 
+    /// Get coords of chunks that received new meshes in the last swap.
+    pub fn last_swapped_coords(&self) -> &[ChunkCoord] {
+        &self.last_swapped
+    }
+
+    /// Get coords of chunks that were evicted in the last eviction pass.
+    pub fn last_evicted_coords(&self) -> &[ChunkCoord] {
+        &self.last_evicted
+    }
+
     /// Evict least-recently-used chunks until memory is within budget.
     ///
     /// Only evicts chunks in Clean or ReadyToSwap state (never Dirty or Meshing).
     /// Stops when usage drops below the low watermark or chunk count
     /// reaches `min_chunks`.
     pub fn evict_to_budget(&mut self, camera_pos: [f32; 3]) -> EvictionStats {
+        self.last_evicted.clear();
         let mut stats = EvictionStats::default();
         let current_usage = self.memory_usage_bytes();
 
@@ -408,6 +429,7 @@ impl ChunkManager {
                 break;
             }
 
+            self.last_evicted.push(candidate.coord);
             self.remove_chunk(candidate.coord);
             remaining_usage = remaining_usage.saturating_sub(candidate.memory_bytes);
             stats.chunks_evicted += 1;
@@ -425,6 +447,7 @@ impl ChunkManager {
     ///
     /// Call this after process_rebuilds(), before rendering.
     pub fn swap_pending_meshes(&mut self) -> SwapStats {
+        self.last_swapped.clear();
         let mut stats = SwapStats::default();
 
         // Collect coords that need dirty marking (to avoid borrow issues)
@@ -441,6 +464,7 @@ impl ChunkManager {
                         chunk.mesh = Some(pending);
                         stats.meshes_swapped += 1;
                         chunk.state = ChunkState::Clean;
+                        self.last_swapped.push(chunk.coord);
                     }
                 } else {
                     // Version mismatch - discard pending and mark dirty
@@ -572,6 +596,8 @@ impl ChunkManager {
         self.dirty_tracker.clear();
         self.rebuild_queue.clear();
         self.lru_tracker.clear();
+        self.last_swapped.clear();
+        self.last_evicted.clear();
     }
 }
 
@@ -951,5 +977,63 @@ mod tests {
         let info = manager.debug_info();
         assert_eq!(info.budget_max_bytes, 1000);
         assert!(!info.budget_exceeded);
+    }
+
+    // ========================================================================
+    // Swap/Eviction tracking tests
+    // ========================================================================
+
+    #[test]
+    fn last_swapped_tracks_coords() {
+        let mut manager = ChunkManager::new();
+        manager.set_voxel([10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+        manager.update([0.0, 0.0, 0.0]);
+
+        let swapped = manager.last_swapped_coords();
+        assert_eq!(swapped.len(), 1);
+        assert_eq!(swapped[0], ChunkCoord::ZERO);
+    }
+
+    #[test]
+    fn last_swapped_clears_each_swap() {
+        let mut manager = ChunkManager::new();
+        manager.set_voxel([10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+        manager.update([0.0, 0.0, 0.0]);
+        assert_eq!(manager.last_swapped_coords().len(), 1);
+
+        // Second swap with no new pending meshes
+        let stats = manager.swap_pending_meshes();
+        assert_eq!(stats.meshes_swapped, 0);
+        assert_eq!(manager.last_swapped_coords().len(), 0);
+    }
+
+    #[test]
+    fn last_evicted_tracks_coords() {
+        let mut manager = tiny_budget_manager();
+
+        // Create 4 clean chunks
+        for i in 0..4 {
+            manager.set_voxel([(i as f32) * 64.0 + 10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+        }
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+
+        manager.evict_to_budget([0.0, 0.0, 0.0]);
+        assert!(!manager.last_evicted_coords().is_empty());
+    }
+
+    #[test]
+    fn last_evicted_clears_each_eviction() {
+        let mut manager = tiny_budget_manager();
+
+        for i in 0..4 {
+            manager.set_voxel([(i as f32) * 64.0 + 10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+        }
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+        manager.evict_to_budget([0.0, 0.0, 0.0]);
+        assert!(!manager.last_evicted_coords().is_empty());
+
+        // Second eviction with nothing to evict
+        manager.evict_to_budget([0.0, 0.0, 0.0]);
+        assert!(manager.last_evicted_coords().is_empty());
     }
 }
