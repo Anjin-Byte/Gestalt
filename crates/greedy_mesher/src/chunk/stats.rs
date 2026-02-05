@@ -60,6 +60,8 @@ pub struct FrameStats {
     pub rebuild: RebuildStats,
     /// Statistics from swap phase.
     pub swap: SwapStats,
+    /// Statistics from eviction phase.
+    pub eviction: super::budget::EvictionStats,
     /// Total chunks managed.
     pub total_chunks: usize,
     /// Chunks currently with valid meshes.
@@ -93,6 +95,12 @@ pub struct ChunkDebugInfo {
     pub voxel_memory_bytes: usize,
     /// Estimated memory usage for mesh data (bytes).
     pub mesh_memory_bytes: usize,
+    /// Memory budget limit (bytes).
+    pub budget_max_bytes: usize,
+    /// Memory usage as percentage of budget.
+    pub budget_usage_percent: f32,
+    /// Whether the memory budget is exceeded.
+    pub budget_exceeded: bool,
 }
 
 impl ChunkDebugInfo {

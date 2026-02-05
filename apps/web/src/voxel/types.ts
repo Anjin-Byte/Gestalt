@@ -47,6 +47,16 @@ export type MeshPoolStats = {
   triangleCount: number;
   vertexCount: number;
   geometryCount: number;
+  /** Estimated GPU memory usage in bytes across all active geometries. */
+  gpuMemoryBytes: number;
+};
+
+/** Memory budget configuration (mirrors Rust MemoryBudget) */
+export type MemoryBudgetConfig = {
+  maxBytes: number;
+  highWatermark: number;
+  lowWatermark: number;
+  minChunks: number;
 };
 
 /** Clipping plane axis */

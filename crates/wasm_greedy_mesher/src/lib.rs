@@ -253,6 +253,123 @@ pub fn mesh_dense_voxels_with_stats(
     result
 }
 
+/// Debug output for greedy mesh visualization.
+///
+/// Contains the mesh, wireframe lines, per-vertex colors, and statistics.
+#[wasm_bindgen]
+pub struct MeshDebugResult {
+    // Mesh data
+    positions: Vec<f32>,
+    normals: Vec<f32>,
+    indices: Vec<u32>,
+    // Wireframe line positions (pairs of xyz endpoints)
+    wire_positions: Vec<f32>,
+    // Per-vertex colors for face direction visualization
+    face_colors: Vec<f32>,
+    // Per-vertex colors for quad size heatmap
+    size_colors: Vec<f32>,
+    // Stats
+    quad_count: usize,
+    vertex_count: usize,
+    triangle_count: usize,
+    max_possible_quads: usize,
+    merge_efficiency: f32,
+    triangle_reduction: f32,
+    // Per-direction quad counts: [+Y, -Y, +X, -X, +Z, -Z]
+    dir_quad_counts: [usize; 6],
+    // Per-direction face counts: [+Y, -Y, +X, -X, +Z, -Z]
+    dir_face_counts: [usize; 6],
+}
+
+#[wasm_bindgen]
+impl MeshDebugResult {
+    #[wasm_bindgen(getter)]
+    pub fn positions(&self) -> Vec<f32> { self.positions.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn normals(&self) -> Vec<f32> { self.normals.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn indices(&self) -> Vec<u32> { self.indices.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn wire_positions(&self) -> Vec<f32> { self.wire_positions.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn face_colors(&self) -> Vec<f32> { self.face_colors.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn size_colors(&self) -> Vec<f32> { self.size_colors.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn quad_count(&self) -> usize { self.quad_count }
+
+    #[wasm_bindgen(getter)]
+    pub fn vertex_count(&self) -> usize { self.vertex_count }
+
+    #[wasm_bindgen(getter)]
+    pub fn triangle_count(&self) -> usize { self.triangle_count }
+
+    #[wasm_bindgen(getter)]
+    pub fn max_possible_quads(&self) -> usize { self.max_possible_quads }
+
+    #[wasm_bindgen(getter)]
+    pub fn merge_efficiency(&self) -> f32 { self.merge_efficiency }
+
+    #[wasm_bindgen(getter)]
+    pub fn triangle_reduction(&self) -> f32 { self.triangle_reduction }
+
+    #[wasm_bindgen(getter)]
+    pub fn is_empty(&self) -> bool { self.indices.is_empty() }
+
+    /// Get per-direction quad counts as [+Y, -Y, +X, -X, +Z, -Z].
+    #[wasm_bindgen(getter)]
+    pub fn dir_quad_counts(&self) -> Vec<usize> { self.dir_quad_counts.to_vec() }
+
+    /// Get per-direction face counts as [+Y, -Y, +X, -X, +Z, -Z].
+    #[wasm_bindgen(getter)]
+    pub fn dir_face_counts(&self) -> Vec<usize> { self.dir_face_counts.to_vec() }
+}
+
+/// Mesh dense voxels with full debug output.
+///
+/// Returns mesh geometry, wireframe lines for quad boundaries,
+/// per-vertex colors for visualization modes, and detailed statistics.
+#[wasm_bindgen]
+pub fn mesh_dense_voxels_debug(
+    voxels: &[u16],
+    width: u32,
+    height: u32,
+    depth: u32,
+    voxel_size: f32,
+    origin_x: f32,
+    origin_y: f32,
+    origin_z: f32,
+) -> MeshDebugResult {
+    let dims = [width as usize, height as usize, depth as usize];
+    let origin = [origin_x, origin_y, origin_z];
+    let chunk = dense_to_binary_chunk_boxed(voxels, dims);
+
+    let output = greedy_mesher::mesh::mesh_chunk_debug(&chunk, voxel_size, origin);
+
+    MeshDebugResult {
+        positions: output.mesh.positions,
+        normals: output.mesh.normals,
+        indices: output.mesh.indices,
+        wire_positions: output.debug.line_positions,
+        face_colors: output.debug.face_colors,
+        size_colors: output.debug.size_colors,
+        quad_count: output.stats.quad_count,
+        vertex_count: output.stats.vertex_count,
+        triangle_count: output.stats.triangle_count,
+        max_possible_quads: output.stats.max_possible_quads,
+        merge_efficiency: output.stats.merge_efficiency,
+        triangle_reduction: output.direction_stats.triangle_reduction,
+        dir_quad_counts: output.direction_stats.quad_counts,
+        dir_face_counts: output.direction_stats.face_counts,
+    }
+}
+
 // Logging support
 
 thread_local! {

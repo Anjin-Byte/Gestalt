@@ -75,6 +75,8 @@ pub mod chunk;
 pub mod dirty;
 pub mod queue;
 pub mod stats;
+pub mod lru;
+pub mod budget;
 pub mod manager;
 
 // Re-export primary types
@@ -84,4 +86,6 @@ pub use chunk::{Chunk, ChunkMesh};
 pub use dirty::DirtyTracker;
 pub use queue::{RebuildQueue, RebuildRequest, calculate_priority};
 pub use stats::{RebuildStats, SwapStats, FrameStats, ChunkDebugInfo, RebuildConfig};
+pub use lru::LruTracker;
+pub use budget::{MemoryBudget, EvictionCandidate, EvictionStats};
 pub use manager::ChunkManager;

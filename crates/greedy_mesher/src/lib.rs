@@ -22,6 +22,7 @@ pub mod merge;
 pub mod expand;
 pub mod mesh;
 pub mod chunk;
+pub mod debug;
 
 // Re-export primary types
 pub use crate::core::{

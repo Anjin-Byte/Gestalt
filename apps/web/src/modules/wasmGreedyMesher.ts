@@ -1,15 +1,19 @@
 /**
  * WASM Greedy Mesher testbed module.
  *
- * Demonstrates the chunk-based voxel rendering system:
- * - ChunkMeshPool for mesh management
- * - Double buffering for flicker-free updates
- * - SlicingManager for clipping planes
+ * Demonstrates the chunk-based voxel rendering system with debug visualization:
+ * - Greedy mesh with configurable voxel patterns
+ * - Quad boundary wireframe overlay
+ * - Face direction / merge size color modes
+ * - Per-direction face count statistics
+ * - Slicing with GPU clipping planes
+ *
+ * Meshing runs in a dedicated Web Worker so the main thread stays responsive.
  */
 
-import type { TestbedModule } from "./types";
-import { ChunkRenderManager } from "../voxel";
-import type { ChunkCoord } from "../voxel";
+import type { TestbedModule, ModuleOutput } from "./types";
+import { MesherClient } from "../workers/mesherClient";
+import type { DebugColorMode } from "../workers/mesherTypes";
 
 type MesherParams = {
   gridSize: number;
@@ -19,7 +23,45 @@ type MesherParams = {
   sliceY: number;
   sliceZ: number;
   sliceEnabled: boolean;
-  showStats: boolean;
+  debugWireframe: boolean;
+  debugColorMode: DebugColorMode;
+  debugChunkBounds: boolean;
+};
+
+/**
+ * Generate wireframe line positions for a box from min to max.
+ * Returns 12 edges × 2 endpoints × 3 floats = 72 floats.
+ */
+const generateBoxWireframe = (
+  minX: number, minY: number, minZ: number,
+  maxX: number, maxY: number, maxZ: number,
+): Float32Array => {
+  // 8 corners of the box
+  const c = [
+    [minX, minY, minZ], // 0: ---
+    [maxX, minY, minZ], // 1: +--
+    [maxX, maxY, minZ], // 2: ++-
+    [minX, maxY, minZ], // 3: -+-
+    [minX, minY, maxZ], // 4: --+
+    [maxX, minY, maxZ], // 5: +-+
+    [maxX, maxY, maxZ], // 6: +++
+    [minX, maxY, maxZ], // 7: -++
+  ];
+
+  // 12 edges as pairs of corner indices
+  const edges = [
+    [0,1],[1,2],[2,3],[3,0], // bottom face
+    [4,5],[5,6],[6,7],[7,4], // top face
+    [0,4],[1,5],[2,6],[3,7], // verticals
+  ];
+
+  const positions = new Float32Array(72);
+  let idx = 0;
+  for (const [a, b] of edges) {
+    positions[idx++] = c[a][0]; positions[idx++] = c[a][1]; positions[idx++] = c[a][2];
+    positions[idx++] = c[b][0]; positions[idx++] = c[b][1]; positions[idx++] = c[b][2];
+  }
+  return positions;
 };
 
 const clamp = (value: number, min: number, max: number) =>
@@ -39,59 +81,14 @@ const asBool = (value: unknown, fallback: boolean): boolean =>
 const asString = (value: unknown, fallback: string): string =>
   typeof value === "string" ? value : fallback;
 
-/**
- * Generate voxel grid based on pattern.
- */
-const generateVoxelGrid = (
-  size: number,
-  pattern: MesherParams["pattern"]
-): Uint16Array => {
-  const voxels = new Uint16Array(size * size * size);
-  const center = size / 2;
-  const radius = size / 2 - 1;
-
-  for (let z = 0; z < size; z++) {
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const idx = x + y * size + z * size * size;
-        let solid = false;
-
-        switch (pattern) {
-          case "solid":
-            solid = true;
-            break;
-
-          case "checkerboard":
-            solid = (x + y + z) % 2 === 0;
-            break;
-
-          case "sphere": {
-            const dx = x - center;
-            const dy = y - center;
-            const dz = z - center;
-            solid = dx * dx + dy * dy + dz * dz <= radius * radius;
-            break;
-          }
-
-          case "noise":
-            solid = Math.random() > 0.5;
-            break;
-        }
-
-        voxels[idx] = solid ? 1 : 0;
-      }
-    }
-  }
-
-  return voxels;
-};
+const DIR_LABELS = ["+Y", "-Y", "+X", "-X", "+Z", "-Z"];
 
 export const createWasmGreedyMesherModule = (): TestbedModule => {
-  let wasmModule: typeof import("../wasm/wasm_greedy_mesher/wasm_greedy_mesher") | null = null;
+  let mesherClient: MesherClient | null = null;
   let statusText = "Not loaded";
   let updateStatus: ((value: string) => void) | null = null;
   let updateStats: ((value: string) => void) | null = null;
-  let renderManager: ChunkRenderManager | null = null;
+  let updateDebugStats: ((value: string) => void) | null = null;
 
   return {
     id: "wasm-greedy-mesher",
@@ -100,22 +97,27 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
     init: async (ctx) => {
       ctx.logger.info("[greedy-mesher] init start");
       try {
-        wasmModule = await import("../wasm/wasm_greedy_mesher/wasm_greedy_mesher");
-        await wasmModule.default();
-        statusText = `Loaded v${wasmModule.get_version()}`;
+        mesherClient = new MesherClient();
+        const version = await mesherClient.init();
+        statusText = `Loaded v${version} (worker)`;
         updateStatus?.(statusText);
         ctx.logger.info(`[greedy-mesher] init complete: ${statusText}`);
       } catch (error) {
         statusText = "Missing (run pnpm build:wasm)";
         updateStatus?.(statusText);
         ctx.logger.warn(`[greedy-mesher] init failed: ${(error as Error).message}`);
+        mesherClient?.dispose();
+        mesherClient = null;
       }
     },
 
     ui: (api) => {
+      // Status displays
       api.addText({ id: "mesher-status", label: "Status", initial: statusText });
-      api.addText({ id: "mesher-stats", label: "Stats", initial: "Pending" });
+      api.addText({ id: "mesher-stats", label: "Mesh", initial: "Pending" });
+      api.addText({ id: "debug-stats", label: "Debug", initial: "" });
 
+      // Voxel generation controls
       api.addSelect({
         id: "pattern",
         label: "Voxel Pattern",
@@ -141,6 +143,27 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
         initial: 0.1,
       });
 
+      // Debug visualization controls
+      api.addCheckbox({
+        id: "debug-wireframe",
+        label: "Quad Wireframe",
+        initial: false,
+      });
+
+      api.addSelect({
+        id: "debug-color-mode",
+        label: "Color Mode",
+        options: ["none", "face-direction", "quad-size"],
+        initial: "none",
+      });
+
+      api.addCheckbox({
+        id: "debug-chunk-bounds",
+        label: "Chunk Bounds",
+        initial: false,
+      });
+
+      // Slicing controls
       api.addCheckbox({
         id: "slice-enabled",
         label: "Enable Slicing",
@@ -174,18 +197,13 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
         initial: 0,
       });
 
-      api.addCheckbox({
-        id: "show-stats",
-        label: "Show Stats",
-        initial: true,
-      });
-
       updateStatus = (value: string) => api.setText("mesher-status", value);
       updateStats = (value: string) => api.setText("mesher-stats", value);
+      updateDebugStats = (value: string) => api.setText("debug-stats", value);
     },
 
     run: async (job) => {
-      if (!wasmModule) {
+      if (!mesherClient) {
         statusText = "Not loaded";
         updateStatus?.(statusText);
         return [];
@@ -199,100 +217,119 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
         sliceY: asNumber(job.params["slice-y"], 0),
         sliceZ: asNumber(job.params["slice-z"], 0),
         sliceEnabled: asBool(job.params["slice-enabled"], false),
-        showStats: asBool(job.params["show-stats"], true),
+        debugWireframe: asBool(job.params["debug-wireframe"], false),
+        debugColorMode: asString(job.params["debug-color-mode"], "none") as DebugColorMode,
+        debugChunkBounds: asBool(job.params["debug-chunk-bounds"], false),
       };
 
-      const startTime = performance.now();
+      const wantsDebug = params.debugWireframe || params.debugColorMode !== "none";
 
-      // Generate voxel data
-      const voxels = generateVoxelGrid(params.gridSize, params.pattern);
-      const genTime = performance.now() - startTime;
+      try {
+        const result = await mesherClient.mesh(
+          {
+            gridSize: params.gridSize,
+            voxelSize: params.voxelSize,
+            pattern: params.pattern,
+            debugMode: wantsDebug,
+            debugColorMode: params.debugColorMode,
+            debugWireframe: params.debugWireframe,
+          },
+          (stage) => {
+            if (stage === "generating") updateStatus?.("Generating voxels...");
+            else if (stage === "meshing") updateStatus?.("Meshing...");
+            else if (stage === "extracting") updateStatus?.("Extracting data...");
+          },
+        );
 
-      // Mesh with WASM
-      const meshStart = performance.now();
-      const result = wasmModule.mesh_dense_voxels(
-        voxels,
-        params.gridSize,
-        params.gridSize,
-        params.gridSize,
-        params.voxelSize,
-        0, 0, 0, // origin
-        true // generate UVs
-      );
-      const meshTime = performance.now() - meshStart;
+        const outputs: ModuleOutput[] = [];
+        const { stats } = result;
 
-      if (result.is_empty) {
-        statusText = "Empty mesh";
+        if (wantsDebug) {
+          // Determine vertex colors based on mode
+          let colors: Float32Array | undefined;
+          if (params.debugColorMode === "face-direction") {
+            colors = result.faceColors;
+          } else if (params.debugColorMode === "quad-size") {
+            colors = result.sizeColors;
+          }
+
+          outputs.push({
+            kind: "mesh",
+            mesh: { positions: result.positions, indices: result.indices, normals: result.normals, colors },
+            label: `Greedy Mesh (${params.pattern})`,
+          });
+
+          if (params.debugWireframe && result.wirePositions && result.wirePositions.length > 0) {
+            outputs.push({
+              kind: "lines",
+              lines: { positions: result.wirePositions, color: [1.0, 1.0, 0.0] },
+              label: "Quad Boundaries",
+            });
+          }
+
+          statusText = `Tri: ${stats.triCount} | Vtx: ${stats.vtxCount} | Quads: ${stats.quadCount}`;
+          updateStatus?.(statusText);
+
+          updateStats?.(
+            `Gen: ${stats.genTime.toFixed(1)}ms | Mesh: ${stats.meshTime.toFixed(1)}ms | ` +
+            `Efficiency: ${((stats.efficiency ?? 0) * 100).toFixed(0)}% | ${(stats.reduction ?? 0).toFixed(1)}x reduction`
+          );
+
+          if (stats.dirQuadCounts && stats.dirFaceCounts) {
+            const dirParts = DIR_LABELS.map((label, i) =>
+              `${label}: ${stats.dirQuadCounts![i]}q/${stats.dirFaceCounts![i]}f`
+            );
+            updateDebugStats?.(dirParts.join(" | "));
+          }
+        } else {
+          outputs.push({
+            kind: "mesh",
+            mesh: { positions: result.positions, indices: result.indices, normals: result.normals },
+            label: `Greedy Mesh (${params.pattern})`,
+          });
+
+          statusText = `Tri: ${stats.triCount} | Vtx: ${stats.vtxCount}`;
+          updateStatus?.(statusText);
+          updateStats?.(
+            `Gen: ${stats.genTime.toFixed(1)}ms | Mesh: ${stats.meshTime.toFixed(1)}ms`
+          );
+          updateDebugStats?.("");
+        }
+
+        // Chunk boundary wireframe (trivial — stays on main thread)
+        if (params.debugChunkBounds) {
+          const extent = params.gridSize * params.voxelSize;
+          const boundsPositions = generateBoxWireframe(0, 0, 0, extent, extent, extent);
+          outputs.push({
+            kind: "lines",
+            lines: { positions: boundsPositions, color: [0.0, 1.0, 1.0] },
+            label: "Chunk Bounds",
+          });
+        }
+
+        return outputs;
+      } catch (error) {
+        const msg = (error as Error).message;
+        if (msg === "cancelled") {
+          // Job was superseded by a newer request — not an error
+          return [];
+        }
+        if (msg === "empty") {
+          statusText = "Empty mesh";
+          updateStatus?.(statusText);
+          return [];
+        }
+        statusText = `Error: ${msg}`;
         updateStatus?.(statusText);
-        result.free();
+        updateStats?.("");
+        updateDebugStats?.("");
         return [];
       }
-
-      // Create render manager if needed
-      if (!renderManager) {
-        renderManager = new ChunkRenderManager({
-          voxelSize: params.voxelSize,
-          chunkSize: 62,
-        });
-      }
-
-      // Update chunk mesh
-      const coord: ChunkCoord = { x: 0, y: 0, z: 0 };
-      renderManager.setChunkMeshFromWasm(coord, result, job.frameId);
-      renderManager.swapPendingMeshes();
-
-      // Configure slicing
-      renderManager.setSlicingEnabled(params.sliceEnabled);
-      if (params.sliceEnabled) {
-        renderManager.setSliceEnabled("x", true);
-        renderManager.setSliceEnabled("y", true);
-        renderManager.setSliceEnabled("z", true);
-        renderManager.setSlicePosition("x", params.sliceX);
-        renderManager.setSlicePosition("y", params.sliceY);
-        renderManager.setSlicePosition("z", params.sliceZ);
-      }
-
-      // Copy data before freeing result
-      const triangleCount = result.triangle_count;
-      const vertexCount = result.vertex_count;
-      const positions = new Float32Array(result.positions);
-      const indices = new Uint32Array(result.indices);
-      const normals = new Float32Array(result.normals);
-
-      // Get stats
-      const stats = renderManager.getStats();
-
-      // Update status
-      statusText = `Triangles: ${triangleCount} | Vertices: ${vertexCount}`;
-      updateStatus?.(statusText);
-
-      if (params.showStats) {
-        updateStats?.(
-          `Gen: ${genTime.toFixed(1)}ms | Mesh: ${meshTime.toFixed(1)}ms | ` +
-          `Chunks: ${stats.totalChunks} | Pending: ${stats.pendingSwaps}`
-        );
-      }
-
-      // Free WASM result
-      result.free();
-
-      // Return the mesh output for the viewer
-      return [{
-        kind: "mesh",
-        mesh: {
-          positions,
-          indices,
-          normals,
-        },
-        label: `Greedy Mesh (${params.pattern})`,
-      }];
     },
 
     dispose: () => {
-      if (renderManager) {
-        renderManager.dispose();
-        renderManager = null;
-      }
+      mesherClient?.dispose();
+      mesherClient = null;
     },
   };
 };

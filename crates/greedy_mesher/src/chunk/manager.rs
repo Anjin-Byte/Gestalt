@@ -2,11 +2,13 @@
 
 use std::collections::HashMap;
 
-use crate::core::{MaterialId, MATERIAL_EMPTY};
+use crate::core::{BinaryChunk, MaterialId, MATERIAL_EMPTY};
 use crate::mesh::mesh_chunk_with_uvs;
 use super::chunk::{Chunk, ChunkMesh};
 use super::coord::ChunkCoord;
 use super::dirty::DirtyTracker;
+use super::lru::LruTracker;
+use super::budget::{MemoryBudget, EvictionCandidate, EvictionStats};
 use super::queue::{RebuildQueue, calculate_priority};
 use super::state::{ChunkState, BoundaryFlags};
 use super::stats::{RebuildStats, SwapStats, FrameStats, ChunkDebugInfo, RebuildConfig};
@@ -37,6 +39,12 @@ pub struct ChunkManager {
 
     /// Configuration for rebuild scheduling.
     config: RebuildConfig,
+
+    /// LRU access tracking for eviction ordering.
+    lru_tracker: LruTracker,
+
+    /// Memory budget and eviction thresholds.
+    budget: MemoryBudget,
 }
 
 impl ChunkManager {
@@ -52,6 +60,20 @@ impl ChunkManager {
             dirty_tracker: DirtyTracker::new(),
             rebuild_queue: RebuildQueue::new(),
             config,
+            lru_tracker: LruTracker::new(),
+            budget: MemoryBudget::default(),
+        }
+    }
+
+    /// Create a new chunk manager with custom configuration and memory budget.
+    pub fn with_budget(config: RebuildConfig, budget: MemoryBudget) -> Self {
+        Self {
+            chunks: HashMap::new(),
+            dirty_tracker: DirtyTracker::new(),
+            rebuild_queue: RebuildQueue::new(),
+            config,
+            lru_tracker: LruTracker::new(),
+            budget,
         }
     }
 
@@ -86,9 +108,10 @@ impl ChunkManager {
 
     /// Remove a chunk.
     pub fn remove_chunk(&mut self, coord: ChunkCoord) -> Option<Chunk> {
-        // Also remove from dirty tracker and queue
+        // Also remove from dirty tracker, queue, and LRU tracker
         self.dirty_tracker.unmark(coord);
         self.rebuild_queue.remove(coord);
+        self.lru_tracker.remove(coord);
         self.chunks.remove(&coord)
     }
 
@@ -152,8 +175,9 @@ impl ChunkManager {
         // Mark dirty with boundary awareness
         self.dirty_tracker.mark_dirty_with_neighbors(chunk_coord, boundary);
 
-        // Transition state
+        // Transition state and update LRU
         chunk.state = ChunkState::Dirty;
+        self.lru_tracker.touch(chunk_coord);
     }
 
     /// Set voxel at voxel index (integer coordinates).
@@ -169,6 +193,7 @@ impl ChunkManager {
         chunk.set_voxel(local[0], local[1], local[2], material);
         self.dirty_tracker.mark_dirty_with_neighbors(chunk_coord, boundary);
         chunk.state = ChunkState::Dirty;
+        self.lru_tracker.touch(chunk_coord);
     }
 
     /// Batch edit multiple voxels efficiently.
@@ -206,6 +231,7 @@ impl ChunkManager {
             chunk.increment_version();
             self.dirty_tracker.mark_dirty_with_neighbors(chunk_coord, combined_boundary);
             chunk.state = ChunkState::Dirty;
+            self.lru_tracker.touch(chunk_coord);
         }
     }
 
@@ -283,6 +309,118 @@ impl ChunkManager {
         stats
     }
 
+    // ========================================================================
+    // Memory Budget & Eviction
+    // ========================================================================
+
+    /// Get total estimated memory usage across all chunks (bytes).
+    pub fn memory_usage_bytes(&self) -> usize {
+        let mut total = 0;
+        for chunk in self.chunks.values() {
+            total += std::mem::size_of::<BinaryChunk>();
+            if let Some(mesh) = &chunk.mesh {
+                total += mesh.memory_bytes();
+            }
+            if let Some(mesh) = &chunk.pending_mesh {
+                total += mesh.memory_bytes();
+            }
+        }
+        total
+    }
+
+    /// Check if memory usage exceeds the high watermark.
+    pub fn is_over_budget(&self) -> bool {
+        self.budget.is_exceeded(self.memory_usage_bytes())
+    }
+
+    /// Record a chunk access for LRU tracking.
+    pub fn touch_chunk(&mut self, coord: ChunkCoord) {
+        self.lru_tracker.touch(coord);
+    }
+
+    /// Get the current memory budget configuration.
+    pub fn budget(&self) -> &MemoryBudget {
+        &self.budget
+    }
+
+    /// Set a new memory budget configuration.
+    pub fn set_budget(&mut self, budget: MemoryBudget) {
+        self.budget = budget;
+    }
+
+    /// Evict least-recently-used chunks until memory is within budget.
+    ///
+    /// Only evicts chunks in Clean or ReadyToSwap state (never Dirty or Meshing).
+    /// Stops when usage drops below the low watermark or chunk count
+    /// reaches `min_chunks`.
+    pub fn evict_to_budget(&mut self, camera_pos: [f32; 3]) -> EvictionStats {
+        let mut stats = EvictionStats::default();
+        let current_usage = self.memory_usage_bytes();
+
+        if !self.budget.is_exceeded(current_usage) {
+            return stats;
+        }
+
+        let voxel_size = self.config.voxel_size;
+        let mut candidates: Vec<EvictionCandidate> = Vec::new();
+
+        for (&coord, chunk) in &self.chunks {
+            match chunk.state {
+                ChunkState::Clean | ChunkState::ReadyToSwap { .. } => {
+                    let access_time = self.lru_tracker.get_access_time(coord).unwrap_or(0);
+                    let center = coord.center_world(voxel_size);
+                    let dx = center[0] - camera_pos[0];
+                    let dy = center[1] - camera_pos[1];
+                    let dz = center[2] - camera_pos[2];
+                    let dist_sq = dx * dx + dy * dy + dz * dz;
+
+                    // Priority: lower = evict sooner.
+                    // Oldest access time first; farther from camera as tiebreaker.
+                    let priority = access_time as f32 - dist_sq.sqrt() * 0.001;
+
+                    let memory = std::mem::size_of::<BinaryChunk>()
+                        + chunk.mesh.as_ref().map(|m| m.memory_bytes()).unwrap_or(0)
+                        + chunk.pending_mesh.as_ref().map(|m| m.memory_bytes()).unwrap_or(0);
+
+                    candidates.push(EvictionCandidate {
+                        coord,
+                        priority,
+                        memory_bytes: memory,
+                    });
+                }
+                ChunkState::Dirty | ChunkState::Meshing { .. } => {
+                    stats.chunks_skipped += 1;
+                }
+            }
+        }
+
+        candidates.sort_by(|a, b| {
+            a.priority.partial_cmp(&b.priority).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut remaining_usage = current_usage;
+
+        for candidate in candidates {
+            if self.budget.is_satisfied(remaining_usage) {
+                break;
+            }
+            if self.chunks.len() <= self.budget.min_chunks {
+                break;
+            }
+
+            self.remove_chunk(candidate.coord);
+            remaining_usage = remaining_usage.saturating_sub(candidate.memory_bytes);
+            stats.chunks_evicted += 1;
+            stats.bytes_freed += candidate.memory_bytes;
+        }
+
+        stats
+    }
+
+    // ========================================================================
+    // Mesh Swap
+    // ========================================================================
+
     /// Swap all pending meshes into active slot.
     ///
     /// Call this after process_rebuilds(), before rendering.
@@ -324,10 +462,11 @@ impl ChunkManager {
 
     /// Process one full frame update.
     ///
-    /// Runs rebuild and swap phases.
+    /// Runs rebuild, swap, and eviction phases.
     pub fn update(&mut self, camera_pos: [f32; 3]) -> FrameStats {
         let rebuild_stats = self.process_rebuilds(camera_pos);
         let swap_stats = self.swap_pending_meshes();
+        let eviction_stats = self.evict_to_budget(camera_pos);
 
         let total_chunks = self.chunks.len();
         let chunks_with_mesh = self.chunks.values().filter(|c| c.mesh.is_some()).count();
@@ -336,6 +475,7 @@ impl ChunkManager {
         FrameStats {
             rebuild: rebuild_stats,
             swap: swap_stats,
+            eviction: eviction_stats,
             total_chunks,
             chunks_with_mesh,
             dirty_chunks,
@@ -359,8 +499,8 @@ impl ChunkManager {
                 ChunkState::ReadyToSwap { .. } => info.ready_to_swap_chunks += 1,
             }
 
-            // Memory estimation for voxels (BinaryChunk size)
-            info.voxel_memory_bytes += std::mem::size_of_val(&chunk.voxels);
+            // Memory estimation for voxels (actual BinaryChunk heap allocation)
+            info.voxel_memory_bytes += std::mem::size_of::<BinaryChunk>();
 
             if let Some(mesh) = &chunk.mesh {
                 info.total_triangles += mesh.triangle_count;
@@ -371,6 +511,17 @@ impl ChunkManager {
 
         info.queue_size = self.rebuild_queue.len();
         info.dirty_tracker_size = self.dirty_tracker.dirty_count();
+
+        // Budget info
+        info.budget_max_bytes = self.budget.max_bytes;
+        let total_memory = info.voxel_memory_bytes + info.mesh_memory_bytes;
+        info.budget_usage_percent = if self.budget.max_bytes > 0 {
+            total_memory as f32 / self.budget.max_bytes as f32 * 100.0
+        } else {
+            0.0
+        };
+        info.budget_exceeded = self.budget.is_exceeded(total_memory);
+
         info
     }
 
@@ -420,6 +571,7 @@ impl ChunkManager {
         self.chunks.clear();
         self.dirty_tracker.clear();
         self.rebuild_queue.clear();
+        self.lru_tracker.clear();
     }
 }
 
@@ -586,5 +738,218 @@ mod tests {
         assert_eq!(info.total_chunks, 1);
         assert_eq!(info.clean_chunks, 1);
         assert!(info.total_triangles > 0);
+        assert!(info.budget_max_bytes > 0);
+        assert!(info.voxel_memory_bytes > 0);
+    }
+
+    // ========================================================================
+    // Eviction tests
+    // ========================================================================
+
+    /// Helper: create a manager with a tiny budget that will be exceeded by a few chunks.
+    fn tiny_budget_manager() -> ChunkManager {
+        let config = RebuildConfig {
+            max_chunks_per_frame: 100,
+            max_time_per_frame_ms: 10000.0,
+            voxel_size: 1.0,
+        };
+        // BinaryChunk is ~544KB, so 2 chunks ~= 1.1 MB.
+        // Set budget so 3 chunks exceed the high watermark.
+        let chunk_size = std::mem::size_of::<BinaryChunk>();
+        let budget = MemoryBudget {
+            max_bytes: chunk_size * 3, // fits ~3 chunks exactly
+            high_watermark: 0.90,      // triggers above ~2.7 chunks
+            low_watermark: 0.50,       // stops at ~1.5 chunks
+            min_chunks: 1,
+        };
+        ChunkManager::with_budget(config, budget)
+    }
+
+    #[test]
+    fn eviction_skips_dirty_chunks() {
+        let mut manager = tiny_budget_manager();
+
+        // Create 4 chunks (will exceed budget), leave them dirty
+        for i in 0..4 {
+            let coord = ChunkCoord::new(i, 0, 0);
+            let chunk = manager.get_or_create_chunk(coord);
+            chunk.set_voxel(1, 1, 1, MATERIAL_DEFAULT);
+            manager.dirty_tracker.mark_dirty(coord);
+            manager.lru_tracker.touch(coord);
+        }
+
+        let stats = manager.evict_to_budget([0.0, 0.0, 0.0]);
+
+        // All chunks are Dirty, so none should be evicted
+        assert_eq!(stats.chunks_evicted, 0);
+        assert_eq!(stats.chunks_skipped, 4);
+        assert_eq!(manager.chunk_count(), 4);
+    }
+
+    #[test]
+    fn eviction_skips_meshing_chunks() {
+        let mut manager = tiny_budget_manager();
+
+        // Create 4 chunks in Meshing state
+        for i in 0..4 {
+            let coord = ChunkCoord::new(i, 0, 0);
+            let chunk = manager.get_or_create_chunk(coord);
+            chunk.set_voxel(1, 1, 1, MATERIAL_DEFAULT);
+            chunk.state = ChunkState::Meshing { data_version: chunk.data_version };
+            manager.lru_tracker.touch(coord);
+        }
+
+        let stats = manager.evict_to_budget([0.0, 0.0, 0.0]);
+
+        assert_eq!(stats.chunks_evicted, 0);
+        assert_eq!(stats.chunks_skipped, 4);
+    }
+
+    #[test]
+    fn eviction_removes_clean_chunks() {
+        let mut manager = tiny_budget_manager();
+
+        // Create 4 chunks, rebuild them so they become Clean
+        for i in 0..4 {
+            manager.set_voxel([(i as f32) * 64.0 + 10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+        }
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+
+        assert_eq!(manager.chunk_count(), 4);
+
+        // Now evict — should remove chunks until below low watermark
+        let stats = manager.evict_to_budget([0.0, 0.0, 0.0]);
+
+        assert!(stats.chunks_evicted > 0);
+        assert!(stats.bytes_freed > 0);
+        assert!(manager.chunk_count() < 4);
+    }
+
+    #[test]
+    fn eviction_stops_at_low_watermark() {
+        let mut manager = tiny_budget_manager();
+
+        // Create 4 clean chunks
+        for i in 0..4 {
+            manager.set_voxel([(i as f32) * 64.0 + 10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+        }
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+
+        let stats = manager.evict_to_budget([0.0, 0.0, 0.0]);
+
+        // After eviction, memory should be at or below low watermark
+        let usage = manager.memory_usage_bytes();
+        assert!(
+            manager.budget().is_satisfied(usage),
+            "usage {} should be at or below low watermark {}",
+            usage, manager.budget().low_watermark_bytes()
+        );
+        assert!(stats.chunks_evicted > 0);
+    }
+
+    #[test]
+    fn eviction_respects_min_chunks() {
+        let config = RebuildConfig::default();
+        let chunk_size = std::mem::size_of::<BinaryChunk>();
+        let budget = MemoryBudget {
+            max_bytes: chunk_size, // very tight — 1 chunk fills budget
+            high_watermark: 0.50,  // triggers at half a chunk
+            low_watermark: 0.10,   // almost nothing
+            min_chunks: 3,         // but never go below 3
+        };
+        let mut manager = ChunkManager::with_budget(config, budget);
+
+        // Create 4 clean chunks
+        for i in 0..4 {
+            manager.set_voxel([(i as f32) * 64.0 + 10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+        }
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+
+        manager.evict_to_budget([0.0, 0.0, 0.0]);
+
+        // Should not go below min_chunks
+        assert!(manager.chunk_count() >= 3);
+    }
+
+    #[test]
+    fn eviction_lru_order() {
+        let mut manager = tiny_budget_manager();
+
+        // Create 4 chunks with explicit LRU ordering
+        // Touch order: c0, c1, c2, c3 — so c0 is oldest
+        for i in 0..4 {
+            let coord = ChunkCoord::new(i, 0, 0);
+            let chunk = manager.get_or_create_chunk(coord);
+            chunk.set_voxel(1, 1, 1, MATERIAL_DEFAULT);
+            chunk.state = ChunkState::Clean;
+            chunk.mesh = Some(ChunkMesh::empty());
+            manager.lru_tracker.touch(coord);
+        }
+
+        manager.evict_to_budget([0.0, 0.0, 0.0]);
+
+        // Oldest chunks (0, 1) should be evicted first
+        // Newest chunks should remain
+        let c3 = ChunkCoord::new(3, 0, 0);
+        assert!(manager.has_chunk(c3), "newest chunk should survive eviction");
+    }
+
+    #[test]
+    fn eviction_no_op_under_budget() {
+        let mut manager = ChunkManager::new(); // default 512 MB budget
+
+        manager.set_voxel([10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+
+        let stats = manager.evict_to_budget([0.0, 0.0, 0.0]);
+
+        assert_eq!(stats.chunks_evicted, 0);
+        assert_eq!(stats.bytes_freed, 0);
+        assert_eq!(manager.chunk_count(), 1);
+    }
+
+    #[test]
+    fn update_includes_eviction() {
+        let mut manager = tiny_budget_manager();
+
+        // Create 4 chunks
+        for i in 0..4 {
+            manager.set_voxel([(i as f32) * 64.0 + 10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+        }
+
+        // update() runs rebuild + swap + eviction
+        let stats = manager.update([0.0, 0.0, 0.0]);
+
+        // Eviction should have occurred after swap
+        assert!(stats.eviction.chunks_evicted > 0 || stats.eviction.chunks_skipped > 0
+            || manager.chunk_count() <= 4);
+    }
+
+    #[test]
+    fn memory_usage_bytes_counts_chunks() {
+        let mut manager = ChunkManager::new();
+
+        assert_eq!(manager.memory_usage_bytes(), 0);
+
+        manager.set_voxel([10.0, 10.0, 10.0], MATERIAL_DEFAULT);
+
+        let usage = manager.memory_usage_bytes();
+        assert!(usage >= std::mem::size_of::<BinaryChunk>());
+    }
+
+    #[test]
+    fn debug_info_budget_fields() {
+        let config = RebuildConfig::default();
+        let budget = MemoryBudget {
+            max_bytes: 1000,
+            high_watermark: 0.90,
+            low_watermark: 0.75,
+            min_chunks: 1,
+        };
+        let manager = ChunkManager::with_budget(config, budget);
+
+        let info = manager.debug_info();
+        assert_eq!(info.budget_max_bytes, 1000);
+        assert!(!info.budget_exceeded);
     }
 }

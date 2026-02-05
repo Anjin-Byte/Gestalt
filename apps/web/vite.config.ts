@@ -30,6 +30,9 @@ export default defineConfig({
       target: "esnext"
     }
   },
+  worker: {
+    format: "es"
+  },
   build: {
     outDir: "dist",
     target: "esnext"

@@ -37,6 +37,7 @@ export type {
   ChunkMeshState,
   ChunkMeshPoolConfig,
   MeshPoolStats,
+  MemoryBudgetConfig,
   SliceAxis,
   SliceConfig,
   SlicingConfig,
@@ -46,6 +47,8 @@ export { chunkKey, parseChunkKey } from "./types";
 
 // Classes
 export { ChunkMeshPool } from "./ChunkMeshPool";
+export { GeometryPool, fillGeometry, estimateGeometryMemory } from "./GeometryPool";
+export type { GeometryPoolStats } from "./GeometryPool";
 export { SlicingManager } from "./SlicingManager";
 export { ChunkRenderManager } from "./ChunkRenderManager";
 export type { ChunkRenderConfig, RenderStats } from "./ChunkRenderManager";

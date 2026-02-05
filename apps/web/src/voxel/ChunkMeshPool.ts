@@ -9,7 +9,6 @@
  */
 
 import {
-  BufferAttribute,
   BufferGeometry,
   Mesh,
   Group,
@@ -23,6 +22,11 @@ import type {
   MeshPoolStats,
 } from "./types";
 import { chunkKey, parseChunkKey } from "./types";
+import {
+  GeometryPool,
+  fillGeometry,
+  estimateGeometryMemory,
+} from "./GeometryPool";
 
 /**
  * Pool entry containing mesh state and Three.js objects.
@@ -48,15 +52,14 @@ export class ChunkMeshPool {
   private parent: Group;
   private voxelSize: number;
   private chunkSize: number;
-
-  /** Geometries pending disposal (deferred to avoid mid-frame issues) */
-  private disposalQueue: BufferGeometry[] = [];
+  private geometryPool: GeometryPool;
 
   constructor(config: ChunkMeshPoolConfig) {
     this.material = config.material;
     this.parent = config.parent;
     this.voxelSize = config.voxelSize;
     this.chunkSize = config.chunkSize;
+    this.geometryPool = new GeometryPool();
   }
 
   // ========================================================================
@@ -113,7 +116,6 @@ export class ChunkMeshPool {
       this.disposeEntry(entry);
     }
     this.pool.clear();
-    this.flushDisposalQueue();
   }
 
   // ========================================================================
@@ -167,9 +169,6 @@ export class ChunkMeshPool {
       }
     }
 
-    // Process deferred disposals
-    this.flushDisposalQueue();
-
     return swapped;
   }
 
@@ -179,7 +178,7 @@ export class ChunkMeshPool {
   private swapEntryPending(entry: PoolEntry): boolean {
     switch (entry.state.status) {
       case "pending": {
-        // Create new mesh and geometry
+        // Acquire and fill geometry from pool
         const geometry = this.createGeometry(entry.state.data);
         const mesh = new Mesh(geometry, this.material);
         mesh.name = `chunk-${chunkKey(entry.coord)}`;
@@ -196,10 +195,10 @@ export class ChunkMeshPool {
       }
 
       case "swapping": {
-        // Dispose old geometry
-        this.disposalQueue.push(entry.state.active.geometry);
+        // Release old geometry back to pool
+        this.geometryPool.release(entry.state.active.geometry);
 
-        // Create new geometry and swap
+        // Acquire and fill new geometry
         const geometry = this.createGeometry(entry.state.pending);
         const mesh = entry.state.active.mesh;
 
@@ -220,79 +219,24 @@ export class ChunkMeshPool {
   // ========================================================================
 
   /**
-   * Create BufferGeometry from WASM mesh data.
+   * Acquire a BufferGeometry from the pool and fill it with mesh data.
    */
   private createGeometry(data: ChunkMeshData): BufferGeometry {
-    const geometry = new BufferGeometry();
-
-    // Positions (required)
-    geometry.setAttribute(
-      "position",
-      new BufferAttribute(this.ensureArrayBuffer(data.positions), 3)
+    const geometry = this.geometryPool.acquire(
+      data.vertexCount,
+      data.indices.length,
     );
 
-    // Normals (required)
-    geometry.setAttribute(
-      "normal",
-      new BufferAttribute(this.ensureArrayBuffer(data.normals), 3)
-    );
-
-    // Indices (required)
-    geometry.setIndex(
-      new BufferAttribute(this.ensureUint32ArrayBuffer(data.indices), 1)
-    );
-
-    // UVs (optional)
-    if (data.uvs && data.uvs.length > 0) {
-      geometry.setAttribute(
-        "uv",
-        new BufferAttribute(this.ensureArrayBuffer(data.uvs), 2)
-      );
-    }
-
-    // Material IDs as vertex attribute (optional, for texture atlas)
-    if (data.materialIds && data.materialIds.length > 0) {
-      geometry.setAttribute(
-        "materialId",
-        new BufferAttribute(this.ensureUint16ArrayBuffer(data.materialIds), 1)
-      );
-    }
-
-    // Compute bounding volumes for frustum culling
-    geometry.computeBoundingBox();
-    geometry.computeBoundingSphere();
+    fillGeometry(geometry, {
+      positions: data.positions,
+      normals: data.normals,
+      indices: data.indices,
+      uvs: data.uvs,
+      materialIds: data.materialIds,
+      vertexCount: data.vertexCount,
+    });
 
     return geometry;
-  }
-
-  /**
-   * Ensure Float32Array has proper ArrayBuffer (not SharedArrayBuffer).
-   */
-  private ensureArrayBuffer(input: Float32Array): Float32Array {
-    if (input.buffer instanceof ArrayBuffer) {
-      return input;
-    }
-    return new Float32Array(input);
-  }
-
-  /**
-   * Ensure Uint32Array has proper ArrayBuffer.
-   */
-  private ensureUint32ArrayBuffer(input: Uint32Array): Uint32Array {
-    if (input.buffer instanceof ArrayBuffer) {
-      return input;
-    }
-    return new Uint32Array(input);
-  }
-
-  /**
-   * Ensure Uint16Array has proper ArrayBuffer.
-   */
-  private ensureUint16ArrayBuffer(input: Uint16Array): Uint16Array {
-    if (input.buffer instanceof ArrayBuffer) {
-      return input;
-    }
-    return new Uint16Array(input);
   }
 
   // ========================================================================
@@ -322,24 +266,14 @@ export class ChunkMeshPool {
     switch (entry.state.status) {
       case "ready":
         this.parent.remove(entry.state.mesh);
-        this.disposalQueue.push(entry.state.geometry);
+        this.geometryPool.release(entry.state.geometry);
         break;
 
       case "swapping":
         this.parent.remove(entry.state.active.mesh);
-        this.disposalQueue.push(entry.state.active.geometry);
+        this.geometryPool.release(entry.state.active.geometry);
         break;
     }
-  }
-
-  /**
-   * Process deferred geometry disposals.
-   */
-  private flushDisposalQueue(): void {
-    for (const geometry of this.disposalQueue) {
-      geometry.dispose();
-    }
-    this.disposalQueue = [];
   }
 
   /**
@@ -347,6 +281,7 @@ export class ChunkMeshPool {
    */
   dispose(): void {
     this.clear();
+    this.geometryPool.dispose();
   }
 
   // ========================================================================
@@ -362,6 +297,7 @@ export class ChunkMeshPool {
     let triangleCount = 0;
     let vertexCount = 0;
     let geometryCount = 0;
+    let gpuMemoryBytes = 0;
 
     for (const entry of this.pool.values()) {
       switch (entry.state.status) {
@@ -376,6 +312,7 @@ export class ChunkMeshPool {
             ? entry.state.geometry.index.count / 3
             : 0;
           vertexCount += entry.state.geometry.attributes.position?.count ?? 0;
+          gpuMemoryBytes += estimateGeometryMemory(entry.state.geometry);
           break;
 
         case "swapping":
@@ -386,6 +323,7 @@ export class ChunkMeshPool {
             ? entry.state.active.geometry.index.count / 3
             : 0;
           vertexCount += entry.state.active.geometry.attributes.position?.count ?? 0;
+          gpuMemoryBytes += estimateGeometryMemory(entry.state.active.geometry);
           break;
       }
     }
@@ -397,6 +335,7 @@ export class ChunkMeshPool {
       triangleCount,
       vertexCount,
       geometryCount,
+      gpuMemoryBytes,
     };
   }
 

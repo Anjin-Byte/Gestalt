@@ -171,6 +171,95 @@ pub fn mesh_chunk_with_stats(
     (mesh, stats)
 }
 
+/// Debug output from meshing pipeline.
+pub struct MeshDebugOutput {
+    /// The mesh geometry
+    pub mesh: MeshOutput,
+    /// Mesh statistics
+    pub stats: MeshStats,
+    /// Debug geometry (wireframes, colors)
+    pub debug: crate::debug::DebugGeometry,
+    /// Per-direction face statistics
+    pub direction_stats: crate::debug::FaceDirectionStats,
+}
+
+/// Mesh a chunk and return full debug output.
+///
+/// This is the primary entry point for debug visualization.
+/// Returns the mesh, statistics, wireframe lines, and per-vertex colors.
+pub fn mesh_chunk_debug(
+    chunk: &BinaryChunk,
+    voxel_size: f32,
+    origin: [f32; 3],
+) -> MeshDebugOutput {
+    if chunk.is_empty() {
+        return MeshDebugOutput {
+            mesh: MeshOutput::default(),
+            stats: MeshStats::default(),
+            debug: crate::debug::DebugGeometry {
+                line_positions: Vec::new(),
+                face_colors: Vec::new(),
+                size_colors: Vec::new(),
+            },
+            direction_stats: crate::debug::FaceDirectionStats::default(),
+        };
+    }
+
+    // Face culling
+    let mut masks = FaceMasks::new();
+    cull_faces(chunk, &mut masks);
+    let max_possible_quads = masks.total_faces();
+
+    // Greedy merge
+    let mut packed_quads: [Vec<u64>; 6] = Default::default();
+    greedy_merge_y_faces(FACE_POS_Y, chunk, &masks, &mut packed_quads[FACE_POS_Y]);
+    greedy_merge_y_faces(FACE_NEG_Y, chunk, &masks, &mut packed_quads[FACE_NEG_Y]);
+    greedy_merge_x_faces(FACE_POS_X, chunk, &masks, &mut packed_quads[FACE_POS_X]);
+    greedy_merge_x_faces(FACE_NEG_X, chunk, &masks, &mut packed_quads[FACE_NEG_X]);
+    greedy_merge_z_faces(FACE_POS_Z, chunk, &masks, &mut packed_quads[FACE_POS_Z]);
+    greedy_merge_z_faces(FACE_NEG_Z, chunk, &masks, &mut packed_quads[FACE_NEG_Z]);
+
+    // Stats
+    let quads_per_face = [
+        packed_quads[FACE_POS_Y].len(),
+        packed_quads[FACE_NEG_Y].len(),
+        packed_quads[FACE_POS_X].len(),
+        packed_quads[FACE_NEG_X].len(),
+        packed_quads[FACE_POS_Z].len(),
+        packed_quads[FACE_NEG_Z].len(),
+    ];
+    let quad_count: usize = quads_per_face.iter().sum();
+
+    // Expand mesh
+    let mesh = expand_quads(&packed_quads, voxel_size, origin);
+
+    let merge_efficiency = if max_possible_quads > 0 {
+        1.0 - (quad_count as f32 / max_possible_quads as f32)
+    } else {
+        0.0
+    };
+
+    let stats = MeshStats {
+        quad_count,
+        quads_per_face,
+        vertex_count: mesh.vertex_count(),
+        triangle_count: mesh.triangle_count(),
+        max_possible_quads,
+        merge_efficiency,
+    };
+
+    // Debug geometry
+    let debug = crate::debug::generate_debug_geometry(&packed_quads, voxel_size, origin);
+    let direction_stats = crate::debug::compute_direction_stats(&packed_quads, max_possible_quads);
+
+    MeshDebugOutput {
+        mesh,
+        stats,
+        debug,
+        direction_stats,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
