@@ -103,7 +103,16 @@ export type ChunkManagerRequest =
   | { type: "cm-touch-chunk"; cx: number; cy: number; cz: number }
   | { type: "cm-remove-chunk"; cx: number; cy: number; cz: number }
   | { type: "cm-clear" }
-  | { type: "cm-debug-info" };
+  | { type: "cm-debug-info" }
+  | {
+      type: "cm-generate-and-populate";
+      gridSize: number;
+      voxelSize: number;
+      pattern: "solid" | "checkerboard" | "sphere" | "noise" | "perlin" | "simplex";
+      simplexScale?: number;
+      simplexOctaves?: number;
+      simplexThreshold?: number;
+    };
 
 // =========================================================================
 // Worker Messages: Worker -> Main Thread
@@ -120,4 +129,11 @@ export type ChunkManagerResponse =
     }
   | { type: "cm-voxel-result"; requestId: number; material: number }
   | { type: "cm-debug-info-result"; info: ChunkDebugInfo }
+  | {
+      type: "cm-populate-done";
+      chunksRebuilt: number;
+      swappedMeshes: ChunkMeshTransfer[];
+      genTime: number;
+      meshTime: number;
+    }
   | { type: "cm-error"; error: string };

@@ -621,6 +621,40 @@ impl WasmChunkManager {
     }
 
     // =====================================================================
+    // Batch Operations
+    // =====================================================================
+
+    /// Populate chunks from a dense voxel grid of arbitrary dimensions.
+    ///
+    /// Clears all existing chunks, then iterates the grid in native Rust
+    /// distributing voxels into correct chunks. One WASM call replaces
+    /// width×height×depth individual set_voxel_at calls.
+    ///
+    /// Grid is X-major order: `voxels[x + y * width + z * width * height]`
+    pub fn populate_dense(
+        &mut self,
+        voxels: &[u16],
+        width: u32,
+        height: u32,
+        depth: u32,
+    ) {
+        self.inner.populate_dense(
+            voxels,
+            width as usize,
+            height as usize,
+            depth as usize,
+        );
+    }
+
+    /// Force-rebuild all dirty chunks (ignores frame budget).
+    ///
+    /// Returns the number of chunks rebuilt. Calls swap_pending_meshes
+    /// internally, so last_swapped_coords() is populated afterward.
+    pub fn rebuild_all_dirty(&mut self) -> usize {
+        self.inner.rebuild_all_dirty([0.0, 0.0, 0.0])
+    }
+
+    // =====================================================================
     // Debug
     // =====================================================================
 

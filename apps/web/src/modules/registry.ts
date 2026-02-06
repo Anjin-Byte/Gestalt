@@ -9,8 +9,8 @@ import { createWasmVoxelizerModule } from "./wasmVoxelizer";
 import { createWasmGreedyMesherModule } from "./wasmGreedyMesher";
 
 export const createDefaultModules = (): TestbedModule[] => [
-  createWasmVoxelizerModule(),
   createWasmGreedyMesherModule(),
+  createWasmVoxelizerModule(),
   createHelloTriangleModule(),
   createVoxelsDebugModule(),
   createWasmExampleModule(),

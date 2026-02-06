@@ -12,7 +12,7 @@
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────┐
-//! │                        ChunkManager                              │
+//! │                        ChunkManager                             │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │  HashMap<ChunkCoord, Chunk>   - Chunk storage                   │
 //! │  DirtyTracker                 - Tracks dirty chunks             │

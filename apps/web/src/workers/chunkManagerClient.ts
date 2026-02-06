@@ -24,6 +24,14 @@ export type UpdateResult = {
   evictedCoords: ChunkCoord[];
 };
 
+/** Result of populate_dense operation. */
+export type PopulateDenseResult = {
+  chunksRebuilt: number;
+  swappedMeshes: ChunkMeshTransfer[];
+  genTime: number;
+  meshTime: number;
+};
+
 export class ChunkManagerClient {
   private worker: Worker;
 
@@ -45,6 +53,10 @@ export class ChunkManagerClient {
   // debugInfo promise
   private resolveDebug: ((info: ChunkDebugInfo) => void) | null = null;
   private rejectDebug: ((error: Error) => void) | null = null;
+
+  // populate promise
+  private resolvePopulate: ((result: PopulateDenseResult) => void) | null = null;
+  private rejectPopulate: ((error: Error) => void) | null = null;
 
   /**
    * Create a client that shares an existing worker.
@@ -82,6 +94,9 @@ export class ChunkManagerClient {
     this.rejectUpdate?.(new Error("disposed"));
     this.resolveUpdate = null;
     this.rejectUpdate = null;
+    this.rejectPopulate?.(new Error("disposed"));
+    this.resolvePopulate = null;
+    this.rejectPopulate = null;
     this.resolveDebug = null;
     this.rejectDebug = null;
     for (const req of this.voxelRequests.values()) {
@@ -140,6 +155,47 @@ export class ChunkManagerClient {
       this.resolveUpdate = resolve;
       this.rejectUpdate = reject;
       this.send({ type: "cm-update", camX, camY, camZ });
+    });
+  }
+
+  // =========================================================================
+  // Generate & Populate (one-shot large grid)
+  // =========================================================================
+
+  /**
+   * Generate a voxel grid and populate chunks in one worker round-trip.
+   *
+   * This is optimized for large grids (>62) where setting voxels individually
+   * would be too slow. The worker generates the voxel pattern in JS, passes
+   * it to WASM populate_dense, rebuilds all dirty chunks, and returns meshes.
+   */
+  generateAndPopulate(opts: {
+    gridSize: number;
+    voxelSize: number;
+    pattern: "solid" | "checkerboard" | "sphere" | "noise" | "perlin" | "simplex";
+    simplexScale?: number;
+    simplexOctaves?: number;
+    simplexThreshold?: number;
+  }): Promise<PopulateDenseResult> {
+    // Reject any in-flight populate
+    if (this.resolvePopulate) {
+      this.rejectPopulate?.(new Error("superseded"));
+      this.resolvePopulate = null;
+      this.rejectPopulate = null;
+    }
+
+    return new Promise<PopulateDenseResult>((resolve, reject) => {
+      this.resolvePopulate = resolve;
+      this.rejectPopulate = reject;
+      this.send({
+        type: "cm-generate-and-populate",
+        gridSize: opts.gridSize,
+        voxelSize: opts.voxelSize,
+        pattern: opts.pattern,
+        simplexScale: opts.simplexScale,
+        simplexOctaves: opts.simplexOctaves,
+        simplexThreshold: opts.simplexThreshold,
+      });
     });
   }
 
@@ -232,9 +288,24 @@ export class ChunkManagerClient {
         this.rejectDebug = null;
         break;
 
+      case "cm-populate-done":
+        this.resolvePopulate?.({
+          chunksRebuilt: msg.chunksRebuilt,
+          swappedMeshes: msg.swappedMeshes,
+          genTime: msg.genTime,
+          meshTime: msg.meshTime,
+        });
+        this.resolvePopulate = null;
+        this.rejectPopulate = null;
+        break;
+
       case "cm-error":
         // Route generic errors to any pending promise
-        if (this.rejectUpdate) {
+        if (this.rejectPopulate) {
+          this.rejectPopulate(new Error(msg.error));
+          this.resolvePopulate = null;
+          this.rejectPopulate = null;
+        } else if (this.rejectUpdate) {
           this.rejectUpdate(new Error(msg.error));
           this.resolveUpdate = null;
           this.rejectUpdate = null;

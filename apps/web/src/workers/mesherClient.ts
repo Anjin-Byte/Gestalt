@@ -72,6 +72,11 @@ export class MesherClient {
     });
   }
 
+  /** Get the underlying Worker for sharing with ChunkManagerClient. */
+  getWorker(): Worker {
+    return this.worker;
+  }
+
   /** Terminate the worker and release resources. */
   dispose(): void {
     this.worker.removeEventListener("message", this.handleMessage);

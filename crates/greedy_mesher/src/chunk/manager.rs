@@ -549,6 +549,38 @@ impl ChunkManager {
         info
     }
 
+    /// Populate chunks from a dense voxel grid of arbitrary dimensions.
+    ///
+    /// Clears all existing chunks, then iterates the grid in native Rust
+    /// and calls `set_voxel_at` for each non-empty voxel. This is far more
+    /// efficient than calling `set_voxel_at` across the WASM boundary for
+    /// each voxel individually.
+    ///
+    /// Grid is stored in X-major order: `voxels[x + y * width + z * width * height]`
+    pub fn populate_dense(
+        &mut self,
+        voxels: &[MaterialId],
+        width: usize,
+        height: usize,
+        depth: usize,
+    ) {
+        self.clear();
+
+        for z in 0..depth {
+            for y in 0..height {
+                for x in 0..width {
+                    let idx = x + y * width + z * width * height;
+                    if idx < voxels.len() {
+                        let material = voxels[idx];
+                        if material != MATERIAL_EMPTY {
+                            self.set_voxel_at([x as i32, y as i32, z as i32], material);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Force immediate rebuild of all dirty chunks (ignores budget).
     ///
     /// Useful for tests or loading operations.
@@ -1035,5 +1067,42 @@ mod tests {
         // Second eviction with nothing to evict
         manager.evict_to_budget([0.0, 0.0, 0.0]);
         assert!(manager.last_evicted_coords().is_empty());
+    }
+
+    // ========================================================================
+    // populate_dense tests
+    // ========================================================================
+
+    #[test]
+    fn populate_dense_creates_chunks() {
+        let mut manager = ChunkManager::new();
+        let voxels = vec![1u16; 4 * 4 * 4];
+        manager.populate_dense(&voxels, 4, 4, 4);
+        assert_eq!(manager.chunk_count(), 1);
+
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+        let chunk = manager.get_chunk(ChunkCoord::ZERO).unwrap();
+        assert!(chunk.mesh.is_some());
+    }
+
+    #[test]
+    fn populate_dense_multi_chunk() {
+        let mut manager = ChunkManager::new();
+        // 128×4×4 grid spans chunks 0 and 1 on x-axis (62 boundary)
+        let (w, h, d) = (128, 4, 4);
+        let voxels = vec![1u16; w * h * d];
+        manager.populate_dense(&voxels, w, h, d);
+        // Voxels 0..61 → chunk (0,0,0), voxels 62..123 → chunk (1,0,0), 124..127 → chunk (2,0,0)
+        assert!(manager.chunk_count() >= 2);
+        assert!(manager.has_chunk(ChunkCoord::new(0, 0, 0)));
+        assert!(manager.has_chunk(ChunkCoord::new(1, 0, 0)));
+    }
+
+    #[test]
+    fn populate_dense_empty_grid() {
+        let mut manager = ChunkManager::new();
+        let voxels = vec![0u16; 32 * 32 * 32];
+        manager.populate_dense(&voxels, 32, 32, 32);
+        assert_eq!(manager.chunk_count(), 0);
     }
 }

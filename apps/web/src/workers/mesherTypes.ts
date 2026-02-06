@@ -5,7 +5,7 @@
  * (MesherClient) and the worker (mesher.worker.ts).
  */
 
-export type VoxelPattern = "solid" | "checkerboard" | "sphere" | "noise";
+export type VoxelPattern = "solid" | "checkerboard" | "sphere" | "noise" | "perlin" | "simplex";
 export type DebugColorMode = "none" | "face-direction" | "quad-size";
 
 /** Parameters for a mesh job sent to the worker. */
@@ -17,6 +17,9 @@ export type MeshJobParams = {
   debugMode: boolean;
   debugColorMode: DebugColorMode;
   debugWireframe: boolean;
+  simplexScale: number;
+  simplexOctaves: number;
+  simplexThreshold: number;
 };
 
 /** Statistics returned with a mesh result. */
