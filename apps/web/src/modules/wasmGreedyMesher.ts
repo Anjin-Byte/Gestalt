@@ -246,7 +246,7 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
         id: "grid-size",
         label: "Grid Size",
         min: 8,
-        max: 256,
+        max: 1024,
         step: 1,
         initial: 62,
       });
@@ -354,7 +354,7 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
       }
 
       const params: MesherParams = {
-        gridSize: clamp(asInt(job.params["grid-size"], 32), 8, 256),
+        gridSize: clamp(asInt(job.params["grid-size"], 32), 8, 1024),
         voxelSize: clamp(asNumber(job.params["voxel-size"], 0.1), 0.01, 0.5),
         pattern: asString(job.params.pattern, "sphere") as MesherParams["pattern"],
         simplexScale: clamp(asNumber(job.params["simplex-scale"], 0.08), 0.01, 0.5),
