@@ -4,6 +4,7 @@ import { ModuleHost } from "./modules/moduleHost";
 import { createThreeBackend } from "./viewer/threeBackend";
 import { attachWebgpuErrorLogger } from "./viewer/webgpuDiagnostics";
 import { Viewer } from "./viewer/Viewer";
+import { initDebugOverlay, getDebugOverlay } from "./ui/debugOverlay";
 
 const app = async () => {
   const canvas = document.getElementById("viewport") as HTMLCanvasElement | null;
@@ -44,6 +45,12 @@ const app = async () => {
     preferredRenderer: savedPreference
   });
   const viewer = new Viewer(backend, { overlay, testMode });
+
+  // Initialize debug overlay on viewport
+  const viewport = canvas.parentElement;
+  if (viewport) {
+    initDebugOverlay({ container: viewport, visible: true });
+  }
 
   let lockResolution = false;
   let lockedWidth = 960;
@@ -180,6 +187,18 @@ const app = async () => {
   debugPanel.appendChild(boundsLabel);
   viewer.setGridVisible(false);
   viewer.setBoundsVisible(false);
+
+  const statsOverlayToggle = document.createElement("input");
+  statsOverlayToggle.type = "checkbox";
+  statsOverlayToggle.checked = true;
+  statsOverlayToggle.addEventListener("change", () => {
+    const debugOverlay = getDebugOverlay();
+    debugOverlay?.setVisible(statsOverlayToggle.checked);
+  });
+  const statsOverlayLabel = document.createElement("label");
+  statsOverlayLabel.textContent = "Stats Overlay";
+  statsOverlayLabel.prepend(statsOverlayToggle);
+  debugPanel.appendChild(statsOverlayLabel);
 
   const unlitToggle = document.createElement("input");
   unlitToggle.type = "checkbox";

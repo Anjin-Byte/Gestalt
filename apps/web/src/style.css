@@ -142,6 +142,60 @@ button:hover {
   border-color: var(--accent);
 }
 
+/* Debug Overlay */
+.debug-overlay {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.debug-section {
+  background: rgba(12, 14, 18, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  backdrop-filter: blur(4px);
+}
+
+.debug-section-header {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(122, 216, 255, 0.2);
+}
+
+.debug-section-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+}
+
+.debug-row {
+  display: contents;
+}
+
+.debug-label {
+  font-size: 11px;
+  color: #8a95a5;
+}
+
+.debug-value {
+  font-size: 11px;
+  color: #d5dbe5;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 900px) {
   #app {
     grid-template-columns: 1fr;
@@ -151,5 +205,11 @@ button:hover {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+
+  .debug-overlay {
+    bottom: 8px;
+    left: 8px;
+    max-width: 280px;
   }
 }

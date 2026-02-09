@@ -56,19 +56,31 @@ export type FrameStats = {
 
 /** Debug info from chunk manager (mirrors ChunkDebugInfo). */
 export type ChunkDebugInfo = {
+  // Chunk State
   totalChunks: number;
   cleanChunks: number;
   dirtyChunks: number;
   meshingChunks: number;
   readyToSwapChunks: number;
   queueSize: number;
+
+  // Mesh Statistics
   totalTriangles: number;
   totalVertices: number;
+
+  // Memory Budget
   voxelMemoryBytes: number;
   meshMemoryBytes: number;
   budgetMaxBytes: number;
   budgetUsagePercent: number;
   budgetExceeded: boolean;
+
+  // Palette Memory Breakdown
+  paletteHeapBytes: number;
+  averageBitsPerVoxel: number;
+  averageCompressionRatio: number;
+  totalPaletteEntries: number;
+  flatArrayEquivalentBytes: number;
 };
 
 // =========================================================================

@@ -745,54 +745,90 @@ impl From<FrameStats> for WasmFrameStats {
 /// Debug information about the chunk system state.
 #[wasm_bindgen]
 pub struct WasmChunkDebugInfo {
+    // Chunk State
     total_chunks: usize,
     clean_chunks: usize,
     dirty_chunks: usize,
     meshing_chunks: usize,
     ready_to_swap_chunks: usize,
     queue_size: usize,
+
+    // Mesh Statistics
     total_triangles: usize,
     total_vertices: usize,
+
+    // Memory Budget
     voxel_memory_bytes: usize,
     mesh_memory_bytes: usize,
     budget_max_bytes: usize,
     budget_usage_percent: f32,
     budget_exceeded: bool,
+
+    // Palette Memory Breakdown
+    palette_heap_bytes: usize,
+    average_bits_per_voxel: f32,
+    average_compression_ratio: f32,
+    total_palette_entries: usize,
+    flat_array_equivalent_bytes: usize,
 }
 
 #[wasm_bindgen]
 impl WasmChunkDebugInfo {
+    // Chunk State
     #[wasm_bindgen(getter)] pub fn total_chunks(&self) -> usize { self.total_chunks }
     #[wasm_bindgen(getter)] pub fn clean_chunks(&self) -> usize { self.clean_chunks }
     #[wasm_bindgen(getter)] pub fn dirty_chunks(&self) -> usize { self.dirty_chunks }
     #[wasm_bindgen(getter)] pub fn meshing_chunks(&self) -> usize { self.meshing_chunks }
     #[wasm_bindgen(getter)] pub fn ready_to_swap_chunks(&self) -> usize { self.ready_to_swap_chunks }
     #[wasm_bindgen(getter)] pub fn queue_size(&self) -> usize { self.queue_size }
+
+    // Mesh Statistics
     #[wasm_bindgen(getter)] pub fn total_triangles(&self) -> usize { self.total_triangles }
     #[wasm_bindgen(getter)] pub fn total_vertices(&self) -> usize { self.total_vertices }
+
+    // Memory Budget
     #[wasm_bindgen(getter)] pub fn voxel_memory_bytes(&self) -> usize { self.voxel_memory_bytes }
     #[wasm_bindgen(getter)] pub fn mesh_memory_bytes(&self) -> usize { self.mesh_memory_bytes }
     #[wasm_bindgen(getter)] pub fn budget_max_bytes(&self) -> usize { self.budget_max_bytes }
     #[wasm_bindgen(getter)] pub fn budget_usage_percent(&self) -> f32 { self.budget_usage_percent }
     #[wasm_bindgen(getter)] pub fn budget_exceeded(&self) -> bool { self.budget_exceeded }
+
+    // Palette Memory Breakdown
+    #[wasm_bindgen(getter)] pub fn palette_heap_bytes(&self) -> usize { self.palette_heap_bytes }
+    #[wasm_bindgen(getter)] pub fn average_bits_per_voxel(&self) -> f32 { self.average_bits_per_voxel }
+    #[wasm_bindgen(getter)] pub fn average_compression_ratio(&self) -> f32 { self.average_compression_ratio }
+    #[wasm_bindgen(getter)] pub fn total_palette_entries(&self) -> usize { self.total_palette_entries }
+    #[wasm_bindgen(getter)] pub fn flat_array_equivalent_bytes(&self) -> usize { self.flat_array_equivalent_bytes }
 }
 
 impl From<ChunkDebugInfo> for WasmChunkDebugInfo {
     fn from(info: ChunkDebugInfo) -> Self {
         Self {
+            // Chunk State
             total_chunks: info.total_chunks,
             clean_chunks: info.clean_chunks,
             dirty_chunks: info.dirty_chunks,
             meshing_chunks: info.meshing_chunks,
             ready_to_swap_chunks: info.ready_to_swap_chunks,
             queue_size: info.queue_size,
+
+            // Mesh Statistics
             total_triangles: info.total_triangles,
             total_vertices: info.total_vertices,
+
+            // Memory Budget
             voxel_memory_bytes: info.voxel_memory_bytes,
             mesh_memory_bytes: info.mesh_memory_bytes,
             budget_max_bytes: info.budget_max_bytes,
             budget_usage_percent: info.budget_usage_percent,
             budget_exceeded: info.budget_exceeded,
+
+            // Palette Memory Breakdown
+            palette_heap_bytes: info.palette_heap_bytes,
+            average_bits_per_voxel: info.average_bits_per_voxel,
+            average_compression_ratio: info.average_compression_ratio,
+            total_palette_entries: info.total_palette_entries,
+            flat_array_equivalent_bytes: info.flat_array_equivalent_bytes,
         }
     }
 }

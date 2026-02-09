@@ -15,6 +15,13 @@ import type { TestbedModule, ModuleOutput } from "./types";
 import { MesherClient } from "../workers/mesherClient";
 import { ChunkManagerClient } from "../workers/chunkManagerClient";
 import type { DebugColorMode } from "../workers/mesherTypes";
+import {
+  getDebugOverlay,
+  formatBytes,
+  formatMs,
+  formatPercent,
+  formatCount,
+} from "../ui/debugOverlay";
 
 /** Chunk size constant (must match Rust CS = 62). */
 const CS = 62;
@@ -97,8 +104,64 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
   let lastVoxelSize: number | null = null;
   let statusText = "Not loaded";
   let updateStatus: ((value: string) => void) | null = null;
-  let updateStats: ((value: string) => void) | null = null;
-  let updateDebugStats: ((value: string) => void) | null = null;
+
+  /** Push performance stats to the debug overlay. */
+  const updatePerformanceOverlay = (genMs: number, meshMs: number, extras?: string) => {
+    const overlay = getDebugOverlay();
+    if (!overlay) return;
+    const entries = [
+      { label: "Generate", value: formatMs(genMs) },
+      { label: "Mesh", value: formatMs(meshMs) },
+    ];
+    if (extras) {
+      entries.push({ label: "Info", value: extras });
+    }
+    overlay.update("performance", entries);
+  };
+
+  /** Push memory stats to the debug overlay. */
+  const updateMemoryOverlay = (
+    voxelBytes: number,
+    meshBytes: number,
+    compressionRatio: number,
+    bitsPerVoxel: number,
+  ) => {
+    const overlay = getDebugOverlay();
+    if (!overlay) return;
+    overlay.update("memory", [
+      { label: "Voxel", value: formatBytes(voxelBytes) },
+      { label: "Mesh", value: formatBytes(meshBytes) },
+      { label: "Total", value: formatBytes(voxelBytes + meshBytes) },
+      { label: "Compression", value: formatPercent(compressionRatio) },
+      { label: "Bits/Voxel", value: bitsPerVoxel.toFixed(1) },
+    ]);
+  };
+
+  /** Push chunk stats to the debug overlay. */
+  const updateChunksOverlay = (
+    chunkCount: number,
+    triangles: number,
+    vertices: number,
+    quads?: number,
+  ) => {
+    const overlay = getDebugOverlay();
+    if (!overlay) return;
+    const entries = [
+      { label: "Chunks", value: String(chunkCount) },
+      { label: "Triangles", value: formatCount(triangles) },
+      { label: "Vertices", value: formatCount(vertices) },
+    ];
+    if (quads !== undefined) {
+      entries.push({ label: "Quads", value: formatCount(quads) });
+    }
+    overlay.update("chunks", entries);
+  };
+
+  /** Clear all overlay sections. */
+  const clearOverlay = () => {
+    const overlay = getDebugOverlay();
+    overlay?.clearAll();
+  };
 
   /**
    * Multi-chunk path for grids larger than CS (62).
@@ -183,11 +246,22 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
       statusText = `Chunks: ${result.chunksRebuilt} | Tri: ${totalTriangles} | Vtx: ${totalVertices}`;
       updateStatus?.(statusText);
 
-      updateStats?.(
-        `Gen: ${result.genTime.toFixed(1)}ms | Mesh: ${result.meshTime.toFixed(1)}ms`
-      );
+      // Update debug overlay with performance stats
+      updatePerformanceOverlay(result.genTime, result.meshTime);
+      updateChunksOverlay(result.chunksRebuilt, totalTriangles, totalVertices);
 
-      updateDebugStats?.("(Debug colors not available for multi-chunk)");
+      // Fetch and display memory/palette stats
+      try {
+        const debugInfo = await chunkManagerClient.debugInfo();
+        updateMemoryOverlay(
+          debugInfo.voxelMemoryBytes,
+          debugInfo.meshMemoryBytes,
+          debugInfo.averageCompressionRatio,
+          debugInfo.averageBitsPerVoxel,
+        );
+      } catch {
+        // Memory stats unavailable
+      }
 
       return outputs;
     } catch (error) {
@@ -197,8 +271,7 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
       }
       statusText = `Error: ${msg}`;
       updateStatus?.(statusText);
-      updateStats?.("");
-      updateDebugStats?.("");
+      clearOverlay();
       return [];
     }
   };
@@ -229,10 +302,8 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
     },
 
     ui: (api) => {
-      // Status displays
+      // Module status (loading state)
       api.addText({ id: "mesher-status", label: "Status", initial: statusText });
-      api.addText({ id: "mesher-stats", label: "Mesh", initial: "Pending" });
-      api.addText({ id: "debug-stats", label: "Debug", initial: "" });
 
       // Voxel generation controls
       api.addSelect({
@@ -342,8 +413,6 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
       });
 
       updateStatus = (value: string) => api.setText("mesher-status", value);
-      updateStats = (value: string) => api.setText("mesher-stats", value);
-      updateDebugStats = (value: string) => api.setText("debug-stats", value);
     },
 
     run: async (job) => {
@@ -425,16 +494,21 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
           statusText = `Tri: ${stats.triCount} | Vtx: ${stats.vtxCount} | Quads: ${stats.quadCount}`;
           updateStatus?.(statusText);
 
-          updateStats?.(
-            `Gen: ${stats.genTime.toFixed(1)}ms | Mesh: ${stats.meshTime.toFixed(1)}ms | ` +
-            `Efficiency: ${((stats.efficiency ?? 0) * 100).toFixed(0)}% | ${(stats.reduction ?? 0).toFixed(1)}x reduction`
+          // Update overlay with single-chunk stats
+          updatePerformanceOverlay(
+            stats.genTime,
+            stats.meshTime,
+            `${((stats.efficiency ?? 0) * 100).toFixed(0)}% eff, ${(stats.reduction ?? 0).toFixed(1)}x red`,
           );
+          updateChunksOverlay(1, stats.triCount, stats.vtxCount, stats.quadCount);
 
+          // Show per-direction stats in custom section
           if (stats.dirQuadCounts && stats.dirFaceCounts) {
-            const dirParts = DIR_LABELS.map((label, i) =>
-              `${label}: ${stats.dirQuadCounts![i]}q/${stats.dirFaceCounts![i]}f`
-            );
-            updateDebugStats?.(dirParts.join(" | "));
+            const overlay = getDebugOverlay();
+            overlay?.update("custom", DIR_LABELS.map((label, i) => ({
+              label,
+              value: `${stats.dirQuadCounts![i]}q / ${stats.dirFaceCounts![i]}f`,
+            })));
           }
         } else {
           outputs.push({
@@ -445,10 +519,9 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
 
           statusText = `Tri: ${stats.triCount} | Vtx: ${stats.vtxCount}`;
           updateStatus?.(statusText);
-          updateStats?.(
-            `Gen: ${stats.genTime.toFixed(1)}ms | Mesh: ${stats.meshTime.toFixed(1)}ms`
-          );
-          updateDebugStats?.("");
+
+          updatePerformanceOverlay(stats.genTime, stats.meshTime);
+          updateChunksOverlay(1, stats.triCount, stats.vtxCount);
         }
 
         // Chunk boundary wireframe (trivial — stays on main thread)
@@ -476,8 +549,7 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
         }
         statusText = `Error: ${msg}`;
         updateStatus?.(statusText);
-        updateStats?.("");
-        updateDebugStats?.("");
+        clearOverlay();
         return [];
       }
     },

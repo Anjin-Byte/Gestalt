@@ -645,19 +645,31 @@ const handleCmDebugInfo = (): void => {
 
   const wasmInfo = chunkManager.debug_info();
   const info: ChunkDebugInfo = {
+    // Chunk State
     totalChunks: wasmInfo.total_chunks,
     cleanChunks: wasmInfo.clean_chunks,
     dirtyChunks: wasmInfo.dirty_chunks,
     meshingChunks: wasmInfo.meshing_chunks,
     readyToSwapChunks: wasmInfo.ready_to_swap_chunks,
     queueSize: wasmInfo.queue_size,
+
+    // Mesh Statistics
     totalTriangles: wasmInfo.total_triangles,
     totalVertices: wasmInfo.total_vertices,
+
+    // Memory Budget
     voxelMemoryBytes: wasmInfo.voxel_memory_bytes,
     meshMemoryBytes: wasmInfo.mesh_memory_bytes,
     budgetMaxBytes: wasmInfo.budget_max_bytes,
     budgetUsagePercent: wasmInfo.budget_usage_percent,
     budgetExceeded: wasmInfo.budget_exceeded,
+
+    // Palette Memory Breakdown
+    paletteHeapBytes: wasmInfo.palette_heap_bytes,
+    averageBitsPerVoxel: wasmInfo.average_bits_per_voxel,
+    averageCompressionRatio: wasmInfo.average_compression_ratio,
+    totalPaletteEntries: wasmInfo.total_palette_entries,
+    flatArrayEquivalentBytes: wasmInfo.flat_array_equivalent_bytes,
   };
   wasmInfo.free();
   cmReply({ type: "cm-debug-info-result", info });
