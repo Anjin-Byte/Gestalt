@@ -168,6 +168,54 @@ impl PaletteMaterials {
         &self.palette
     }
 
+    /// Calculate the total heap memory used by this structure in bytes.
+    ///
+    /// This includes:
+    /// - Palette vector capacity (`Vec<MaterialId>`)
+    /// - Indices vector capacity (`Vec<u64>`)
+    ///
+    /// Does not include the struct's stack size (use `std::mem::size_of::<PaletteMaterials>()` for that).
+    ///
+    /// # Examples
+    /// ```
+    /// # use greedy_mesher::chunk::palette_materials::PaletteMaterials;
+    /// let materials = PaletteMaterials::new();
+    ///
+    /// // 1-bit indices: 4,096 u64 words = 32,768 bytes
+    /// // Plus palette capacity (at least 1 u16 = 2 bytes)
+    /// assert!(materials.heap_bytes() >= 32_768);
+    /// ```
+    #[inline]
+    pub fn heap_bytes(&self) -> usize {
+        let palette_bytes = self.palette.capacity() * std::mem::size_of::<MaterialId>();
+        let indices_bytes = self.indices.capacity() * std::mem::size_of::<u64>();
+        palette_bytes + indices_bytes
+    }
+
+    /// Calculate the theoretical minimum memory for a flat u16 array.
+    ///
+    /// This is useful for measuring compression efficiency:
+    /// `efficiency = 1.0 - (heap_bytes() as f32 / flat_array_bytes() as f32)`
+    ///
+    /// For a 64³ chunk with u16 materials: 262,144 × 2 = 524,288 bytes
+    #[inline]
+    pub const fn flat_array_bytes() -> usize {
+        VOXEL_COUNT * std::mem::size_of::<MaterialId>()
+    }
+
+    /// Calculate the compression ratio compared to a flat u16 array.
+    ///
+    /// Returns a value between 0.0 and 1.0, where:
+    /// - 0.88 means 88% compression (only using 12% of flat array size)
+    /// - 0.0 means no compression (same size as flat array)
+    /// - Negative values mean the palette is larger (very rare, >65k materials)
+    #[inline]
+    pub fn compression_ratio(&self) -> f32 {
+        let flat = Self::flat_array_bytes() as f32;
+        let actual = self.heap_bytes() as f32;
+        1.0 - (actual / flat)
+    }
+
     /// Find the palette index for a given material.
     ///
     /// Returns None if the material is not in the palette.
@@ -415,5 +463,69 @@ mod tests {
         assert_eq!(materials.get_material(1, 0, 0), 1);
         assert_eq!(materials.get_material(63, 0, 0), 63);
         assert_eq!(materials.get_material(0, 1, 0), 64);
+    }
+
+    #[test]
+    fn test_memory_tracking() {
+        let materials = PaletteMaterials::new();
+
+        // 1-bit indices: 262,144 / 64 = 4,096 u64 words = 32,768 bytes minimum
+        let heap = materials.heap_bytes();
+        assert!(
+            heap >= 32_768,
+            "heap_bytes should be at least 32,768 for 1-bit, got {}",
+            heap
+        );
+
+        // Flat array would be 524,288 bytes
+        assert_eq!(PaletteMaterials::flat_array_bytes(), 524_288);
+
+        // Compression ratio should be high for sparse palette
+        let ratio = materials.compression_ratio();
+        assert!(
+            ratio > 0.9,
+            "compression_ratio for 1-bit should be > 0.9, got {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_memory_grows_with_palette() {
+        let mut materials = PaletteMaterials::new();
+        let initial_heap = materials.heap_bytes();
+
+        // 1-bit: 4,096 words = 32,768 bytes
+        assert!(initial_heap >= 32_768);
+
+        // Add materials to trigger 1→2 bit repack
+        materials.set_material(0, 0, 0, 1);
+        materials.set_material(1, 0, 0, 2);
+        let heap_2bit = materials.heap_bytes();
+
+        // 2-bit: 8,192 words = 65,536 bytes
+        assert!(
+            heap_2bit >= 65_536,
+            "2-bit should be at least 65,536 bytes, got {}",
+            heap_2bit
+        );
+
+        // Add more to trigger 2→4 bit repack
+        materials.set_material(2, 0, 0, 3);
+        materials.set_material(3, 0, 0, 4);
+        materials.set_material(4, 0, 0, 5); // 5th unique -> needs 3 bits, but bits_required rounds up
+
+        let heap_after = materials.heap_bytes();
+
+        // Memory should grow with bit width
+        assert!(
+            heap_after >= heap_2bit,
+            "Memory should grow or stay same after adding materials"
+        );
+
+        // Compression ratio should still be positive (better than flat array)
+        assert!(
+            materials.compression_ratio() > 0.0,
+            "Should still have positive compression"
+        );
     }
 }

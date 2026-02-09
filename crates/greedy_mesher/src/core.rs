@@ -118,6 +118,84 @@ impl BinaryChunk {
     pub fn is_empty(&self) -> bool {
         self.opaque_mask.iter().all(|&col| col == 0)
     }
+
+    /// Calculate the total heap memory used by this chunk in bytes.
+    ///
+    /// This includes:
+    /// - `PaletteMaterials` heap allocations (palette + indices vectors)
+    ///
+    /// Does not include the struct's stack/inline size (opaque_mask is inline).
+    /// For total size including inline data, add `std::mem::size_of::<BinaryChunk>()`.
+    ///
+    /// # Examples
+    /// ```
+    /// # use greedy_mesher::core::BinaryChunk;
+    /// let chunk = BinaryChunk::new();
+    ///
+    /// // Heap: at least 32 KiB for 1-bit indices
+    /// assert!(chunk.heap_bytes() >= 32_768);
+    ///
+    /// // Total memory = stack + heap
+    /// let total = std::mem::size_of::<BinaryChunk>() + chunk.heap_bytes();
+    /// ```
+    #[inline]
+    pub fn heap_bytes(&self) -> usize {
+        self.materials.heap_bytes()
+    }
+
+    /// Calculate the total memory footprint of this chunk.
+    ///
+    /// This is the sum of:
+    /// - Stack/inline size (`opaque_mask` + struct overhead)
+    /// - Heap allocations (`PaletteMaterials` vectors)
+    ///
+    /// Use this for accurate memory budgeting.
+    #[inline]
+    pub fn total_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.heap_bytes()
+    }
+
+    /// Get memory statistics for this chunk.
+    ///
+    /// Returns detailed breakdown useful for debugging and analysis.
+    pub fn memory_stats(&self) -> BinaryChunkMemoryStats {
+        BinaryChunkMemoryStats {
+            opaque_mask_bytes: std::mem::size_of_val(&self.opaque_mask),
+            palette_materials_stack_bytes: std::mem::size_of_val(&self.materials),
+            palette_materials_heap_bytes: self.materials.heap_bytes(),
+            palette_size: self.materials.palette_size(),
+            bits_per_voxel: self.materials.bits_per_voxel(),
+            compression_ratio: self.materials.compression_ratio(),
+        }
+    }
+}
+
+/// Memory statistics for a BinaryChunk.
+///
+/// Provides detailed breakdown of memory usage for debugging and optimization.
+#[derive(Debug, Clone, Copy)]
+pub struct BinaryChunkMemoryStats {
+    /// Size of the opaque_mask array (always 32,768 bytes for 64³).
+    pub opaque_mask_bytes: usize,
+    /// Stack size of the PaletteMaterials struct.
+    pub palette_materials_stack_bytes: usize,
+    /// Heap size of the PaletteMaterials (palette + indices vectors).
+    pub palette_materials_heap_bytes: usize,
+    /// Number of unique materials in the palette.
+    pub palette_size: usize,
+    /// Bits per voxel index (1-16).
+    pub bits_per_voxel: u8,
+    /// Compression ratio vs flat u16 array (0.0-1.0, higher = better).
+    pub compression_ratio: f32,
+}
+
+impl BinaryChunkMemoryStats {
+    /// Total memory used by this chunk.
+    pub fn total_bytes(&self) -> usize {
+        self.opaque_mask_bytes
+            + self.palette_materials_stack_bytes
+            + self.palette_materials_heap_bytes
+    }
 }
 
 impl Default for BinaryChunk {

@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::core::{BinaryChunk, MaterialId, MATERIAL_EMPTY};
+use crate::core::{MaterialId, MATERIAL_EMPTY};
+#[cfg(test)]
+use crate::core::BinaryChunk;
 use crate::mesh::mesh_chunk_with_uvs;
 use super::chunk::{Chunk, ChunkMesh};
 use super::coord::ChunkCoord;
@@ -522,10 +524,16 @@ impl ChunkManager {
     // ========================================================================
 
     /// Get total estimated memory usage across all chunks (bytes).
+    ///
+    /// Includes:
+    /// - Voxel data (opaque mask + palette materials with heap allocations)
+    /// - Mesh data (positions, normals, indices, UVs, material IDs)
+    /// - Pending mesh data (waiting to swap)
     pub fn memory_usage_bytes(&self) -> usize {
         let mut total = 0;
         for chunk in self.chunks.values() {
-            total += std::mem::size_of::<BinaryChunk>();
+            // Use total_bytes() to include heap allocations from PaletteMaterials
+            total += chunk.voxels.total_bytes();
             if let Some(mesh) = &chunk.mesh {
                 total += mesh.memory_bytes();
             }
@@ -597,7 +605,7 @@ impl ChunkManager {
                     // Oldest access time first; farther from camera as tiebreaker.
                     let priority = access_time as f32 - dist_sq.sqrt() * 0.001;
 
-                    let memory = std::mem::size_of::<BinaryChunk>()
+                    let memory = chunk.voxels.total_bytes()
                         + chunk.mesh.as_ref().map(|m| m.memory_bytes()).unwrap_or(0)
                         + chunk.pending_mesh.as_ref().map(|m| m.memory_bytes()).unwrap_or(0);
 
@@ -710,7 +718,11 @@ impl ChunkManager {
 
     /// Get comprehensive debug information.
     pub fn debug_info(&self) -> ChunkDebugInfo {
+        use crate::chunk::palette_materials::PaletteMaterials;
+
         let mut info = ChunkDebugInfo::default();
+        let mut total_bits_per_voxel = 0u32;
+        let mut total_compression_ratio = 0.0f32;
 
         for chunk in self.chunks.values() {
             info.total_chunks += 1;
@@ -721,14 +733,31 @@ impl ChunkManager {
                 ChunkState::ReadyToSwap { .. } => info.ready_to_swap_chunks += 1,
             }
 
-            // Memory estimation for voxels (actual BinaryChunk heap allocation)
-            info.voxel_memory_bytes += std::mem::size_of::<BinaryChunk>();
+            // Memory estimation for voxels (includes heap allocations)
+            info.voxel_memory_bytes += chunk.voxels.total_bytes();
+
+            // Palette memory breakdown
+            let stats = chunk.voxels.memory_stats();
+            info.palette_heap_bytes += stats.palette_materials_heap_bytes;
+            info.total_palette_entries += stats.palette_size;
+            total_bits_per_voxel += stats.bits_per_voxel as u32;
+            total_compression_ratio += stats.compression_ratio;
 
             if let Some(mesh) = &chunk.mesh {
                 info.total_triangles += mesh.triangle_count;
                 info.total_vertices += mesh.vertex_count;
                 info.mesh_memory_bytes += mesh.memory_bytes();
             }
+        }
+
+        // Calculate averages
+        if info.total_chunks > 0 {
+            info.average_bits_per_voxel =
+                total_bits_per_voxel as f32 / info.total_chunks as f32;
+            info.average_compression_ratio =
+                total_compression_ratio / info.total_chunks as f32;
+            info.flat_array_equivalent_bytes =
+                info.total_chunks * PaletteMaterials::flat_array_bytes();
         }
 
         info.queue_size = self.rebuild_queue.len();
@@ -1015,9 +1044,9 @@ mod tests {
             max_time_per_frame_ms: 10000.0,
             voxel_size: 1.0,
         };
-        // BinaryChunk is ~544KB, so 2 chunks ~= 1.1 MB.
+        // BinaryChunk with palette materials uses ~65KB (32KB opaque + 32KB indices).
         // Set budget so 3 chunks exceed the high watermark.
-        let chunk_size = std::mem::size_of::<BinaryChunk>();
+        let chunk_size = BinaryChunk::new().total_bytes();
         let budget = MemoryBudget {
             max_bytes: chunk_size * 3, // fits ~3 chunks exactly
             high_watermark: 0.90,      // triggers above ~2.7 chunks
@@ -1112,7 +1141,7 @@ mod tests {
     #[test]
     fn eviction_respects_min_chunks() {
         let config = RebuildConfig::default();
-        let chunk_size = std::mem::size_of::<BinaryChunk>();
+        let chunk_size = BinaryChunk::new().total_bytes();
         let budget = MemoryBudget {
             max_bytes: chunk_size, // very tight — 1 chunk fills budget
             high_watermark: 0.50,  // triggers at half a chunk
@@ -1196,7 +1225,9 @@ mod tests {
         manager.set_voxel([10.0, 10.0, 10.0], MATERIAL_DEFAULT);
 
         let usage = manager.memory_usage_bytes();
-        assert!(usage >= std::mem::size_of::<BinaryChunk>());
+        // Memory should include both struct size and heap allocations
+        let expected_min = BinaryChunk::new().total_bytes();
+        assert!(usage >= expected_min, "Expected at least {} bytes, got {}", expected_min, usage);
     }
 
     #[test]

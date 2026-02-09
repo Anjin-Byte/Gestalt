@@ -954,14 +954,6 @@ pub fn repack_indices(old_bits: u8, new_bits: u8, src: &[u64], dst: &mut [u64]) 
 /// # Panics
 /// Panics if buffer sizes don't match expected values.
 ///
-/// # Examples
-/// ```
-/// # use greedy_mesher::chunk::palette_repack::{repack_generic, required_words, VOXEL_COUNT};
-/// let src = vec![0u64; required_words(VOXEL_COUNT, 3)];
-/// let mut dst = vec![0u64; required_words(VOXEL_COUNT, 5)];
-///
-/// repack_generic(3, 5, &src, &mut dst);
-/// ```
 #[inline]
 fn repack_generic(old_bits: u8, new_bits: u8, src: &[u64], dst: &mut [u64]) {
     // Verify buffer sizes

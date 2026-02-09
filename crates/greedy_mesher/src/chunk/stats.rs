@@ -101,6 +101,19 @@ pub struct ChunkDebugInfo {
     pub budget_usage_percent: f32,
     /// Whether the memory budget is exceeded.
     pub budget_exceeded: bool,
+
+    // === Palette Memory Breakdown ===
+
+    /// Total heap memory used by palette materials (palette + indices vectors).
+    pub palette_heap_bytes: usize,
+    /// Average bits per voxel across all chunks (1.0 = best compression, 16.0 = no compression).
+    pub average_bits_per_voxel: f32,
+    /// Average compression ratio across all chunks (0.0-1.0, higher = better compression).
+    pub average_compression_ratio: f32,
+    /// Total unique materials across all palettes.
+    pub total_palette_entries: usize,
+    /// Memory that would be used by flat u16 arrays (for comparison).
+    pub flat_array_equivalent_bytes: usize,
 }
 
 impl ChunkDebugInfo {
