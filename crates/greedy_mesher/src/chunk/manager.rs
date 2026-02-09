@@ -249,6 +249,193 @@ impl ChunkManager {
     // Rebuild Processing
     // ========================================================================
 
+    /// Synchronize padding for a chunk from all its neighbors.
+    ///
+    /// This copies edge voxels from neighbor chunks into the padding layer,
+    /// enabling correct face culling at chunk boundaries. Should be called
+    /// before meshing a chunk.
+    ///
+    /// # Arguments
+    /// * `coord` - The chunk coordinate to sync padding for
+    fn sync_chunk_padding(&mut self, coord: ChunkCoord) {
+        // Get neighbor coordinates (order: +X, -X, +Y, -Y, +Z, -Z)
+        let neighbors = coord.neighbors();
+
+        // Collect edge data from each neighbor that exists
+        // We need to collect first due to borrow checker constraints
+        let mut neighbor_edges: [Option<Vec<MaterialId>>; 6] = Default::default();
+
+        for (direction, neighbor_coord) in neighbors.iter().enumerate() {
+            if let Some(neighbor) = self.chunks.get(neighbor_coord) {
+                let mut edge_data = Vec::with_capacity((Chunk::SIZE * Chunk::SIZE) as usize);
+
+                // Extract edge voxels based on direction
+                match direction {
+                    0 => {
+                        // +X: Extract neighbor's x=0 edge
+                        for y in 0..Chunk::SIZE {
+                            for z in 0..Chunk::SIZE {
+                                edge_data.push(neighbor.get_voxel(0, y, z));
+                            }
+                        }
+                    }
+                    1 => {
+                        // -X: Extract neighbor's x=61 edge
+                        for y in 0..Chunk::SIZE {
+                            for z in 0..Chunk::SIZE {
+                                edge_data.push(neighbor.get_voxel(Chunk::SIZE - 1, y, z));
+                            }
+                        }
+                    }
+                    2 => {
+                        // +Y: Extract neighbor's y=0 edge
+                        for x in 0..Chunk::SIZE {
+                            for z in 0..Chunk::SIZE {
+                                edge_data.push(neighbor.get_voxel(x, 0, z));
+                            }
+                        }
+                    }
+                    3 => {
+                        // -Y: Extract neighbor's y=61 edge
+                        for x in 0..Chunk::SIZE {
+                            for z in 0..Chunk::SIZE {
+                                edge_data.push(neighbor.get_voxel(x, Chunk::SIZE - 1, z));
+                            }
+                        }
+                    }
+                    4 => {
+                        // +Z: Extract neighbor's z=0 edge
+                        for x in 0..Chunk::SIZE {
+                            for y in 0..Chunk::SIZE {
+                                edge_data.push(neighbor.get_voxel(x, y, 0));
+                            }
+                        }
+                    }
+                    5 => {
+                        // -Z: Extract neighbor's z=61 edge
+                        for x in 0..Chunk::SIZE {
+                            for y in 0..Chunk::SIZE {
+                                edge_data.push(neighbor.get_voxel(x, y, Chunk::SIZE - 1));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                neighbor_edges[direction] = Some(edge_data);
+            }
+        }
+
+        // Now apply collected edge data to our chunk's padding
+        if let Some(chunk) = self.chunks.get_mut(&coord) {
+            for (direction, edge_data_opt) in neighbor_edges.iter().enumerate() {
+                if let Some(edge_data) = edge_data_opt {
+                    let mut idx = 0;
+
+                    match direction {
+                        0 => {
+                            // +X: Apply to x=63 padding
+                            for y in 0..Chunk::SIZE {
+                                for z in 0..Chunk::SIZE {
+                                    let material = edge_data[idx];
+                                    let py = y as usize + 1;
+                                    let pz = z as usize + 1;
+                                    if material == MATERIAL_EMPTY {
+                                        chunk.voxels.clear(63, py, pz);
+                                    } else {
+                                        chunk.voxels.set(63, py, pz, material);
+                                    }
+                                    idx += 1;
+                                }
+                            }
+                        }
+                        1 => {
+                            // -X: Apply to x=0 padding
+                            for y in 0..Chunk::SIZE {
+                                for z in 0..Chunk::SIZE {
+                                    let material = edge_data[idx];
+                                    let py = y as usize + 1;
+                                    let pz = z as usize + 1;
+                                    if material == MATERIAL_EMPTY {
+                                        chunk.voxels.clear(0, py, pz);
+                                    } else {
+                                        chunk.voxels.set(0, py, pz, material);
+                                    }
+                                    idx += 1;
+                                }
+                            }
+                        }
+                        2 => {
+                            // +Y: Apply to y=63 padding
+                            for x in 0..Chunk::SIZE {
+                                for z in 0..Chunk::SIZE {
+                                    let material = edge_data[idx];
+                                    let px = x as usize + 1;
+                                    let pz = z as usize + 1;
+                                    if material == MATERIAL_EMPTY {
+                                        chunk.voxels.clear(px, 63, pz);
+                                    } else {
+                                        chunk.voxels.set(px, 63, pz, material);
+                                    }
+                                    idx += 1;
+                                }
+                            }
+                        }
+                        3 => {
+                            // -Y: Apply to y=0 padding
+                            for x in 0..Chunk::SIZE {
+                                for z in 0..Chunk::SIZE {
+                                    let material = edge_data[idx];
+                                    let px = x as usize + 1;
+                                    let pz = z as usize + 1;
+                                    if material == MATERIAL_EMPTY {
+                                        chunk.voxels.clear(px, 0, pz);
+                                    } else {
+                                        chunk.voxels.set(px, 0, pz, material);
+                                    }
+                                    idx += 1;
+                                }
+                            }
+                        }
+                        4 => {
+                            // +Z: Apply to z=63 padding
+                            for x in 0..Chunk::SIZE {
+                                for y in 0..Chunk::SIZE {
+                                    let material = edge_data[idx];
+                                    let px = x as usize + 1;
+                                    let py = y as usize + 1;
+                                    if material == MATERIAL_EMPTY {
+                                        chunk.voxels.clear(px, py, 63);
+                                    } else {
+                                        chunk.voxels.set(px, py, 63, material);
+                                    }
+                                    idx += 1;
+                                }
+                            }
+                        }
+                        5 => {
+                            // -Z: Apply to z=0 padding
+                            for x in 0..Chunk::SIZE {
+                                for y in 0..Chunk::SIZE {
+                                    let material = edge_data[idx];
+                                    let px = x as usize + 1;
+                                    let py = y as usize + 1;
+                                    if material == MATERIAL_EMPTY {
+                                        chunk.voxels.clear(px, py, 0);
+                                    } else {
+                                        chunk.voxels.set(px, py, 0, material);
+                                    }
+                                    idx += 1;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     /// Process pending rebuilds within frame budget.
     ///
     /// Returns statistics about the rebuild operations performed.
@@ -296,6 +483,17 @@ impl ChunkManager {
                 stats.version_mismatches += 1;
                 continue;
             }
+
+            // Release the mutable reference to chunk so we can call sync_chunk_padding
+            let _ = chunk;
+
+            // Sync padding from neighbors before meshing
+            self.sync_chunk_padding(request.coord);
+
+            // Get chunk again after sync
+            let Some(chunk) = self.chunks.get_mut(&request.coord) else {
+                continue;
+            };
 
             // Perform rebuild using standalone function
             let mesh = build_mesh_for_chunk(chunk, voxel_size);
@@ -592,6 +790,9 @@ impl ChunkManager {
         let dirty: Vec<_> = self.dirty_tracker.take_dirty().into_iter().collect();
 
         for coord in dirty {
+            // Sync padding from neighbors before meshing
+            self.sync_chunk_padding(coord);
+
             if let Some(chunk) = self.chunks.get_mut(&coord) {
                 let mesh = build_mesh_for_chunk(chunk, voxel_size);
                 chunk.pending_mesh = Some(mesh);
@@ -604,6 +805,9 @@ impl ChunkManager {
 
         // Also process rebuild queue
         while let Some(request) = self.rebuild_queue.pop() {
+            // Sync padding from neighbors before meshing
+            self.sync_chunk_padding(request.coord);
+
             if let Some(chunk) = self.chunks.get_mut(&request.coord) {
                 if chunk.data_version == request.data_version {
                     let mesh = build_mesh_for_chunk(chunk, voxel_size);
@@ -1104,5 +1308,133 @@ mod tests {
         let voxels = vec![0u16; 32 * 32 * 32];
         manager.populate_dense(&voxels, 32, 32, 32);
         assert_eq!(manager.chunk_count(), 0);
+    }
+
+    // ========================================================================
+    // Padding Synchronization tests
+    // ========================================================================
+
+    #[test]
+    fn padding_sync_reduces_boundary_faces() {
+        let mut manager = ChunkManager::new();
+
+        // Create two adjacent chunks with solid voxels at the shared boundary
+        // Chunk (0,0,0) with solid voxel at x=61 (right edge)
+        manager.set_voxel_at([61, 30, 30], MATERIAL_DEFAULT);
+
+        // Chunk (1,0,0) with solid voxel at x=0 (left edge) - adjacent to above
+        manager.set_voxel_at([62, 30, 30], MATERIAL_DEFAULT);
+
+        // Rebuild both chunks with padding sync
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+        manager.swap_pending_meshes();
+
+        // Get the meshes
+        let chunk0 = manager.get_chunk(ChunkCoord::new(0, 0, 0)).unwrap();
+        let chunk1 = manager.get_chunk(ChunkCoord::new(1, 0, 0)).unwrap();
+
+        // Both chunks should have meshes
+        assert!(chunk0.mesh.is_some());
+        assert!(chunk1.mesh.is_some());
+
+        let mesh0 = chunk0.mesh.as_ref().unwrap();
+        let mesh1 = chunk1.mesh.as_ref().unwrap();
+
+        // Each voxel should have 6 faces normally
+        // But with padding sync, the shared boundary faces should be culled
+        // So each should have 5 faces visible (not 6)
+
+        // Single voxel with all faces exposed = 2 triangles/face * 6 faces = 12 triangles
+        // Single voxel with one face culled = 2 triangles/face * 5 faces = 10 triangles
+
+        // Note: This assumes the face culling is working. Without padding sync,
+        // both would render 12 triangles (6 faces each) with z-fighting at the boundary.
+        assert_eq!(mesh0.triangle_count, 10, "Chunk 0 should have 5 visible faces (10 triangles)");
+        assert_eq!(mesh1.triangle_count, 10, "Chunk 1 should have 5 visible faces (10 triangles)");
+    }
+
+    #[test]
+    fn padding_sync_works_on_y_axis() {
+        let mut manager = ChunkManager::new();
+
+        // Create two vertically adjacent chunks
+        // Chunk (0,0,0) with solid at y=61 (top edge)
+        manager.set_voxel_at([30, 61, 30], MATERIAL_DEFAULT);
+
+        // Chunk (0,1,0) with solid at y=0 (bottom edge, which is voxel y=62 globally)
+        manager.set_voxel_at([30, 62, 30], MATERIAL_DEFAULT);
+
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+        manager.swap_pending_meshes();
+
+        let chunk0 = manager.get_chunk(ChunkCoord::new(0, 0, 0)).unwrap();
+        let chunk1 = manager.get_chunk(ChunkCoord::new(0, 1, 0)).unwrap();
+
+        let mesh0 = chunk0.mesh.as_ref().unwrap();
+        let mesh1 = chunk1.mesh.as_ref().unwrap();
+
+        // With proper padding sync, boundary faces should be culled
+        assert_eq!(mesh0.triangle_count, 10);
+        assert_eq!(mesh1.triangle_count, 10);
+    }
+
+    #[test]
+    fn padding_sync_with_empty_neighbor() {
+        let mut manager = ChunkManager::new();
+
+        // Create a single chunk with voxels at the edge
+        // No neighbor exists, so padding should remain empty
+        manager.set_voxel_at([61, 30, 30], MATERIAL_DEFAULT);
+
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+        manager.swap_pending_meshes();
+
+        let chunk = manager.get_chunk(ChunkCoord::new(0, 0, 0)).unwrap();
+        let mesh = chunk.mesh.as_ref().unwrap();
+
+        // Without a neighbor, all 6 faces should be rendered
+        assert_eq!(mesh.triangle_count, 12, "Isolated voxel should have all 6 faces (12 triangles)");
+    }
+
+    #[test]
+    fn padding_sync_cross_boundary_column() {
+        let mut manager = ChunkManager::new();
+
+        // Create a solid column of 4 voxels crossing chunk boundary
+        // x=60,61 in chunk 0, x=0,1 in chunk 1 (global x=62,63)
+        for x in 60..64 {
+            manager.set_voxel_at([x, 30, 30], MATERIAL_DEFAULT);
+        }
+
+        manager.rebuild_all_dirty([0.0, 0.0, 0.0]);
+        manager.swap_pending_meshes();
+
+        let chunk0 = manager.get_chunk(ChunkCoord::new(0, 0, 0)).unwrap();
+        let chunk1 = manager.get_chunk(ChunkCoord::new(1, 0, 0)).unwrap();
+
+        // Verify padding was synced correctly
+        assert_eq!(chunk0.voxels.get_material(63, 31, 31), MATERIAL_DEFAULT, "Chunk 0 +X padding should contain neighbor's edge voxel");
+        assert_eq!(chunk1.voxels.get_material(0, 31, 31), MATERIAL_DEFAULT, "Chunk 1 -X padding should contain neighbor's edge voxel");
+
+        // With proper face culling AND greedy merging:
+        // x=60: -X face (exposed), +X face (culled by x=61)
+        // x=61: -X face (culled by x=60), +X face (culled by padding)
+        // Both have ±Y and ±Z faces which get MERGED into 2×1 quads
+        //
+        // Chunk 0 quads:
+        // - 1 small quad for -X at x=60 (1×1) = 2 triangles
+        // - 4 merged quads for ±Y, ±Z spanning x=60..62 (2×1 each) = 8 triangles
+        // Total: 5 quads = 10 triangles
+        //
+        // Chunk 1 quads (same pattern):
+        // - 1 small quad for +X at x=1 = 2 triangles
+        // - 4 merged quads for ±Y, ±Z spanning x=0..2 = 8 triangles
+        // Total: 5 quads = 10 triangles
+
+        let mesh0 = chunk0.mesh.as_ref().unwrap();
+        let mesh1 = chunk1.mesh.as_ref().unwrap();
+
+        assert_eq!(mesh0.triangle_count, 10, "Chunk 0 should have 10 triangles (5 merged quads)");
+        assert_eq!(mesh1.triangle_count, 10, "Chunk 1 should have 10 triangles (5 merged quads)");
     }
 }

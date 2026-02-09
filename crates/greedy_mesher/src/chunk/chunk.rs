@@ -241,6 +241,74 @@ impl Chunk {
         self.state = ChunkState::Dirty;
         self.pending_mesh = None;
     }
+
+    /// Copy edge voxels from a neighbor chunk into our padding.
+    ///
+    /// This enables correct face culling at chunk boundaries by providing
+    /// the meshing algorithm with neighbor voxel data through the padding layer.
+    ///
+    /// # Arguments
+    /// * `neighbor` - The adjacent chunk to copy edge data from
+    /// * `direction` - Which face to sync (0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z)
+    pub fn sync_padding_from_neighbor(&mut self, neighbor: &Chunk, direction: usize) {
+        match direction {
+            0 => {
+                // +X: Copy neighbor's x=0 edge into our x=63 padding
+                for y in 0..Self::SIZE {
+                    for z in 0..Self::SIZE {
+                        let material = neighbor.get_voxel(0, y, z);
+                        self.voxels.set(63, y as usize + 1, z as usize + 1, material);
+                    }
+                }
+            }
+            1 => {
+                // -X: Copy neighbor's x=61 edge into our x=0 padding
+                for y in 0..Self::SIZE {
+                    for z in 0..Self::SIZE {
+                        let material = neighbor.get_voxel(Self::SIZE - 1, y, z);
+                        self.voxels.set(0, y as usize + 1, z as usize + 1, material);
+                    }
+                }
+            }
+            2 => {
+                // +Y: Copy neighbor's y=0 edge into our y=63 padding
+                for x in 0..Self::SIZE {
+                    for z in 0..Self::SIZE {
+                        let material = neighbor.get_voxel(x, 0, z);
+                        self.voxels.set(x as usize + 1, 63, z as usize + 1, material);
+                    }
+                }
+            }
+            3 => {
+                // -Y: Copy neighbor's y=61 edge into our y=0 padding
+                for x in 0..Self::SIZE {
+                    for z in 0..Self::SIZE {
+                        let material = neighbor.get_voxel(x, Self::SIZE - 1, z);
+                        self.voxels.set(x as usize + 1, 0, z as usize + 1, material);
+                    }
+                }
+            }
+            4 => {
+                // +Z: Copy neighbor's z=0 edge into our z=63 padding
+                for x in 0..Self::SIZE {
+                    for y in 0..Self::SIZE {
+                        let material = neighbor.get_voxel(x, y, 0);
+                        self.voxels.set(x as usize + 1, y as usize + 1, 63, material);
+                    }
+                }
+            }
+            5 => {
+                // -Z: Copy neighbor's z=61 edge into our z=0 padding
+                for x in 0..Self::SIZE {
+                    for y in 0..Self::SIZE {
+                        let material = neighbor.get_voxel(x, y, Self::SIZE - 1);
+                        self.voxels.set(x as usize + 1, y as usize + 1, 0, material);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -371,5 +439,52 @@ mod tests {
         assert!(chunk.is_empty());
         assert_eq!(chunk.state, ChunkState::Dirty);
         assert!(chunk.data_version > old_version);
+    }
+
+    #[test]
+    fn sync_padding_from_neighbor_x() {
+        let mut chunk_a = Chunk::new(ChunkCoord::new(0, 0, 0));
+        let mut chunk_b = Chunk::new(ChunkCoord::new(1, 0, 0));
+
+        // Set edge voxels in chunk A at x=61 (rightmost edge)
+        chunk_a.set_voxel(61, 30, 30, 42);
+        chunk_a.set_voxel(61, 31, 31, 43);
+
+        // Sync chunk B's -X padding from chunk A's +X edge
+        chunk_b.sync_padding_from_neighbor(&chunk_a, 1); // direction 1 = -X
+
+        // Check that chunk B's x=0 padding now contains chunk A's x=61 data
+        assert_eq!(chunk_b.voxels.get_material(0, 31, 31), 42);
+        assert_eq!(chunk_b.voxels.get_material(0, 32, 32), 43);
+    }
+
+    #[test]
+    fn sync_padding_from_neighbor_y() {
+        let mut chunk_a = Chunk::new(ChunkCoord::new(0, 0, 0));
+        let mut chunk_b = Chunk::new(ChunkCoord::new(0, 1, 0));
+
+        // Set edge voxels in chunk A at y=61 (topmost edge)
+        chunk_a.set_voxel(30, 61, 30, 50);
+
+        // Sync chunk B's -Y padding from chunk A's +Y edge
+        chunk_b.sync_padding_from_neighbor(&chunk_a, 3); // direction 3 = -Y
+
+        // Check that chunk B's y=0 padding now contains chunk A's y=61 data
+        assert_eq!(chunk_b.voxels.get_material(31, 0, 31), 50);
+    }
+
+    #[test]
+    fn sync_padding_from_neighbor_z() {
+        let mut chunk_a = Chunk::new(ChunkCoord::new(0, 0, 0));
+        let mut chunk_b = Chunk::new(ChunkCoord::new(0, 0, 1));
+
+        // Set edge voxels in chunk A at z=61 (farthest edge)
+        chunk_a.set_voxel(30, 30, 61, 60);
+
+        // Sync chunk B's -Z padding from chunk A's +Z edge
+        chunk_b.sync_padding_from_neighbor(&chunk_a, 5); // direction 5 = -Z
+
+        // Check that chunk B's z=0 padding now contains chunk A's z=61 data
+        assert_eq!(chunk_b.voxels.get_material(31, 31, 0), 60);
     }
 }
