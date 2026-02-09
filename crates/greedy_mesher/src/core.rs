@@ -44,42 +44,35 @@ pub const FACE_NORMALS: [[f32; 3]; 6] = [
 ///
 /// Memory layout:
 /// - `opaque_mask[x * CS_P + z]` contains 64 bits representing the Y column at (x, z).
-/// - `materials[x * CS_P2 + y * CS_P + z]` contains the material ID at (x, y, z).
+/// - `materials` uses a palette + bitpacked indices for per-voxel materials.
 #[derive(Clone)]
 pub struct BinaryChunk {
     /// Opaque mask: one bit per voxel, organized as Y columns.
     /// `opaque_mask[x * CS_P + z]` contains 64 bits for Y positions.
     pub opaque_mask: [u64; CS_P2],
 
-    /// Material IDs per voxel (16-bit for texture atlas support).
-    pub materials: [MaterialId; CS_P3],
+    /// Palette-based materials for all voxels in the chunk.
+    pub materials: crate::chunk::palette_materials::PaletteMaterials,
 }
 
 impl BinaryChunk {
     /// Create a new empty chunk.
     ///
-    /// WARNING: This allocates ~544KB on the stack.
+    /// WARNING: This allocates ~32KB on the stack for the opaque mask.
     /// For WASM or stack-constrained environments, use `new_boxed()`.
     pub fn new() -> Self {
         Self {
             opaque_mask: [0u64; CS_P2],
-            materials: [MATERIAL_EMPTY; CS_P3],
+            materials: crate::chunk::palette_materials::PaletteMaterials::new(),
         }
     }
 
     /// Create a new empty chunk on the heap.
     ///
     /// This is the preferred method for WASM and other stack-constrained
-    /// environments. Uses `Box::new_uninit()` to avoid stack allocation.
+    /// environments.
     pub fn new_boxed() -> Box<Self> {
-        // SAFETY: BinaryChunk is valid when zero-initialized
-        // - opaque_mask: [0u64; CS_P2] is valid (all zeros = all empty)
-        // - materials: [0u16; CS_P3] is valid (0 = MATERIAL_EMPTY)
-        unsafe {
-            let mut chunk = Box::<Self>::new_uninit();
-            std::ptr::write_bytes(chunk.as_mut_ptr(), 0, 1);
-            chunk.assume_init()
-        }
+        Box::new(Self::new())
     }
 
     /// Set a voxel as solid with the given material.
@@ -91,7 +84,7 @@ impl BinaryChunk {
         debug_assert!(x < CS_P && y < CS_P && z < CS_P, "Coordinates out of bounds");
         let column_idx = x * CS_P + z;
         self.opaque_mask[column_idx] |= 1u64 << y;
-        self.materials[x * CS_P2 + y * CS_P + z] = material;
+        self.materials.set_material(x, y, z, material);
     }
 
     /// Clear a voxel (make it empty).
@@ -100,7 +93,7 @@ impl BinaryChunk {
         debug_assert!(x < CS_P && y < CS_P && z < CS_P, "Coordinates out of bounds");
         let column_idx = x * CS_P + z;
         self.opaque_mask[column_idx] &= !(1u64 << y);
-        self.materials[x * CS_P2 + y * CS_P + z] = MATERIAL_EMPTY;
+        self.materials.set_material(x, y, z, MATERIAL_EMPTY);
     }
 
     /// Check if a voxel is solid.
@@ -113,7 +106,7 @@ impl BinaryChunk {
     /// Get the material at a position (only valid if solid).
     #[inline]
     pub fn get_material(&self, x: usize, y: usize, z: usize) -> MaterialId {
-        self.materials[x * CS_P2 + y * CS_P + z]
+        self.materials.get_material(x, y, z)
     }
 
     /// Count total solid voxels in the chunk.

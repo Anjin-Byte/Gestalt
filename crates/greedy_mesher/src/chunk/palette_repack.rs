@@ -61,7 +61,7 @@ pub const fn bits_required(palette_len: usize) -> u8 {
 #[inline(always)]
 pub const fn required_words(count: usize, bits: u8) -> usize {
     let total_bits = count * bits as usize;
-    (total_bits + 63) / 64 // Ceiling division
+    total_bits.div_ceil(64)
 }
 
 /// Extract a runtime-variable bit-width index from packed buffer.
@@ -93,7 +93,7 @@ pub const fn required_words(count: usize, bits: u8) -> usize {
 /// ```
 #[inline(always)]
 pub unsafe fn get_index_generic(buffer: &[u64], voxel_idx: usize, bits: u8) -> u16 {
-    debug_assert!(bits >= 1 && bits <= 16, "bits out of range: {}", bits);
+    debug_assert!((1..=16).contains(&bits), "bits out of range: {}", bits);
 
     // Calculate bit position using shifts (faster than division/modulo)
     let bit_offset = voxel_idx * bits as usize;
@@ -158,7 +158,7 @@ pub unsafe fn get_index_generic(buffer: &[u64], voxel_idx: usize, bits: u8) -> u
 /// ```
 #[inline(always)]
 pub unsafe fn set_index_generic(buffer: &mut [u64], voxel_idx: usize, index: u16, bits: u8) {
-    debug_assert!(bits >= 1 && bits <= 16, "bits out of range: {}", bits);
+    debug_assert!((1..=16).contains(&bits), "bits out of range: {}", bits);
     debug_assert!(
         (index as u32) < (1u32 << bits),
         "index {} out of range for bit width {}",
@@ -173,8 +173,9 @@ pub unsafe fn set_index_generic(buffer: &mut [u64], voxel_idx: usize, index: u16
 
     if bit_pos + bits <= 64 {
         // Case 1: Index fits entirely within one word (common)
+        let mask = ((1u64 << bits) - 1) << bit_pos;
         let word = buffer.get_unchecked_mut(word_idx);
-        *word |= (index as u64) << bit_pos;
+        *word = (*word & !mask) | ((index as u64) << bit_pos);
     } else {
         // Case 2: Index spans two words (odd bit widths only)
         let bits_in_first = 64 - bit_pos;
@@ -183,11 +184,15 @@ pub unsafe fn set_index_generic(buffer: &mut [u64], voxel_idx: usize, index: u16
         let low_mask = (1u16 << bits_in_first) - 1;
         let high_mask = (1u16 << bits_in_second) - 1;
 
+        // Clear and set first word
+        let first_bit_mask = ((1u64 << bits_in_first) - 1) << bit_pos;
         let word = buffer.get_unchecked_mut(word_idx);
-        *word |= ((index & low_mask) as u64) << bit_pos;
+        *word = (*word & !first_bit_mask) | (((index & low_mask) as u64) << bit_pos);
 
+        // Clear and set second word
+        let second_bit_mask = (1u64 << bits_in_second) - 1;
         let next_word = buffer.get_unchecked_mut(word_idx + 1);
-        *next_word |= ((index >> bits_in_first) & high_mask) as u64;
+        *next_word = (*next_word & !second_bit_mask) | ((index >> bits_in_first) & high_mask) as u64;
     }
 }
 
@@ -216,7 +221,7 @@ pub unsafe fn set_index_generic(buffer: &mut [u64], voxel_idx: usize, index: u16
 /// ```
 #[inline(always)]
 pub unsafe fn get_index<const BITS: u8>(buffer: &[u64], voxel_idx: usize) -> u16 {
-    debug_assert!(BITS >= 1 && BITS <= 16, "BITS out of range");
+    debug_assert!((1..=16).contains(&BITS), "BITS out of range");
 
     // Compile-time check: can indices span word boundaries?
     // Note: Compiler will constant-fold this for each specialization
@@ -275,7 +280,7 @@ pub unsafe fn get_index<const BITS: u8>(buffer: &[u64], voxel_idx: usize) -> u16
 /// ```
 #[inline(always)]
 pub unsafe fn set_index<const BITS: u8>(buffer: &mut [u64], voxel_idx: usize, index: u16) {
-    debug_assert!(BITS >= 1 && BITS <= 16, "BITS out of range");
+    debug_assert!((1..=16).contains(&BITS), "BITS out of range");
     debug_assert!(
         (index as u32) < (1u32 << BITS),
         "index {} out of range for bit width {}",
@@ -300,15 +305,20 @@ pub unsafe fn set_index<const BITS: u8>(buffer: &mut [u64], voxel_idx: usize, in
         let low_mask = (1u16 << bits_in_first) - 1;
         let high_mask = (1u16 << bits_in_second) - 1;
 
+        // Clear and set first word
+        let first_bit_mask = ((1u64 << bits_in_first) - 1) << bit_pos;
         let word = buffer.get_unchecked_mut(word_idx);
-        *word |= ((index & low_mask) as u64) << bit_pos;
+        *word = (*word & !first_bit_mask) | (((index & low_mask) as u64) << bit_pos);
 
+        // Clear and set second word
+        let second_bit_mask = (1u64 << bits_in_second) - 1;
         let next_word = buffer.get_unchecked_mut(word_idx + 1);
-        *next_word |= ((index >> bits_in_first) & high_mask) as u64;
+        *next_word = (*next_word & !second_bit_mask) | ((index >> bits_in_first) & high_mask) as u64;
     } else {
         // Common case (branchless for power-of-two BITS)
+        let mask = ((1u64 << BITS) - 1) << bit_pos;
         let word = buffer.get_unchecked_mut(word_idx);
-        *word |= (index as u64) << bit_pos;
+        *word = (*word & !mask) | ((index as u64) << bit_pos);
     }
 }
 
@@ -427,7 +437,7 @@ fn repack_fast_4_to_8(src: &[u64], dst: &mut [u64]) {
 /// - Process: 1 source word → 2 destination words
 #[inline]
 fn repack_fast_1_to_2(src: &[u64], dst: &mut [u64]) {
-    debug_assert_eq!(src.len(), VOXEL_COUNT * 1 / 64); // 4,096 words
+    debug_assert_eq!(src.len(), VOXEL_COUNT / 64); // 4,096 words
     debug_assert_eq!(dst.len(), VOXEL_COUNT * 2 / 64); // 8,192 words
 
     for (src_idx, &src_word) in src.iter().enumerate() {
@@ -525,7 +535,7 @@ fn repack_fast_4_to_2(src: &[u64], dst: &mut [u64]) {
 #[inline]
 fn repack_fast_2_to_1(src: &[u64], dst: &mut [u64]) {
     debug_assert_eq!(src.len(), VOXEL_COUNT * 2 / 64); // 8,192 words
-    debug_assert_eq!(dst.len(), VOXEL_COUNT * 1 / 64); // 4,096 words
+    debug_assert_eq!(dst.len(), VOXEL_COUNT / 64); // 4,096 words
 
     for dst_idx in 0..dst.len() {
         let src_base = dst_idx * 2;
@@ -604,7 +614,7 @@ fn repack_fast_16_to_8(src: &[u64], dst: &mut [u64]) {
 /// Fast path for 1-bit → 4-bit repack (2→16 materials).
 #[inline]
 fn repack_fast_1_to_4(src: &[u64], dst: &mut [u64]) {
-    debug_assert_eq!(src.len(), VOXEL_COUNT * 1 / 64);
+    debug_assert_eq!(src.len(), VOXEL_COUNT / 64);
     debug_assert_eq!(dst.len(), VOXEL_COUNT * 4 / 64);
 
     for (src_idx, &src_word) in src.iter().enumerate() {
@@ -626,7 +636,7 @@ fn repack_fast_1_to_4(src: &[u64], dst: &mut [u64]) {
 /// Fast path for 1-bit → 8-bit repack (2→256 materials).
 #[inline]
 fn repack_fast_1_to_8(src: &[u64], dst: &mut [u64]) {
-    debug_assert_eq!(src.len(), VOXEL_COUNT * 1 / 64);
+    debug_assert_eq!(src.len(), VOXEL_COUNT / 64);
     debug_assert_eq!(dst.len(), VOXEL_COUNT * 8 / 64);
 
     for (src_idx, &src_word) in src.iter().enumerate() {
@@ -647,7 +657,7 @@ fn repack_fast_1_to_8(src: &[u64], dst: &mut [u64]) {
 /// Fast path for 1-bit → 16-bit repack (2→65536 materials).
 #[inline]
 fn repack_fast_1_to_16(src: &[u64], dst: &mut [u64]) {
-    debug_assert_eq!(src.len(), VOXEL_COUNT * 1 / 64);
+    debug_assert_eq!(src.len(), VOXEL_COUNT / 64);
     debug_assert_eq!(dst.len(), VOXEL_COUNT * 16 / 64);
 
     for (src_idx, &src_word) in src.iter().enumerate() {
@@ -780,7 +790,7 @@ fn repack_fast_16_to_2(src: &[u64], dst: &mut [u64]) {
 #[inline]
 fn repack_fast_16_to_1(src: &[u64], dst: &mut [u64]) {
     debug_assert_eq!(src.len(), VOXEL_COUNT * 16 / 64);
-    debug_assert_eq!(dst.len(), VOXEL_COUNT * 1 / 64);
+    debug_assert_eq!(dst.len(), VOXEL_COUNT / 64);
 
     for dst_idx in 0..dst.len() {
         let src_base = dst_idx * 16;
@@ -826,7 +836,7 @@ fn repack_fast_8_to_2(src: &[u64], dst: &mut [u64]) {
 #[inline]
 fn repack_fast_8_to_1(src: &[u64], dst: &mut [u64]) {
     debug_assert_eq!(src.len(), VOXEL_COUNT * 8 / 64);
-    debug_assert_eq!(dst.len(), VOXEL_COUNT * 1 / 64);
+    debug_assert_eq!(dst.len(), VOXEL_COUNT / 64);
 
     for dst_idx in 0..dst.len() {
         let src_base = dst_idx * 8;
@@ -849,7 +859,7 @@ fn repack_fast_8_to_1(src: &[u64], dst: &mut [u64]) {
 #[inline]
 fn repack_fast_4_to_1(src: &[u64], dst: &mut [u64]) {
     debug_assert_eq!(src.len(), VOXEL_COUNT * 4 / 64);
-    debug_assert_eq!(dst.len(), VOXEL_COUNT * 1 / 64);
+    debug_assert_eq!(dst.len(), VOXEL_COUNT / 64);
 
     for dst_idx in 0..dst.len() {
         let src_base = dst_idx * 4;
@@ -1118,46 +1128,45 @@ mod tests {
     }
 
     #[test]
-    fn test_buffer_zeroing_requirement() {
-        // Test that buffer pre-zeroing is critical (Issue 3)
+    fn test_read_modify_write_correctness() {
+        // Test that set_index_generic correctly overwrites existing values
+        // using read-modify-write (clear old bits, set new bits)
         const TEST_BITS: u8 = 4;
-        let indices = vec![5u16; 100]; // All voxels = 5
 
-        // Correct: zero buffer first
-        let mut buf_zeroed = vec![0u64; required_words(100, TEST_BITS)];
-        for (i, &val) in indices.iter().enumerate() {
-            unsafe {
-                set_index_generic(&mut buf_zeroed, i, val, TEST_BITS);
-            }
-        }
+        // Start with a buffer full of 0xF (all bits set)
+        let mut buffer = vec![0xFFFFFFFFFFFFFFFFu64; required_words(100, TEST_BITS)];
 
-        // Incorrect: non-zero buffer (simulates reused buffer)
-        let mut buf_dirty = vec![0xFFFFFFFFFFFFFFFFu64; required_words(100, TEST_BITS)];
-        for (i, &val) in indices.iter().enumerate() {
-            unsafe {
-                set_index_generic(&mut buf_dirty, i, val, TEST_BITS);
-            }
-        }
-
-        // Verify they're different (proving buffer must be zeroed)
-        assert_ne!(
-            buf_zeroed, buf_dirty,
-            "Buffer zeroing should be required (OR operation depends on zero initial state)"
-        );
-
-        // Verify zeroed buffer is correct
+        // Write new values - should correctly overwrite the 0xF values
         for i in 0..100 {
-            let val = unsafe { get_index_generic(&buf_zeroed, i, TEST_BITS) };
-            assert_eq!(val, 5, "Zeroed buffer should have correct values");
+            unsafe {
+                set_index_generic(&mut buffer, i, 5, TEST_BITS);
+            }
         }
 
-        // Verify dirty buffer is corrupted
-        let first_dirty = unsafe { get_index_generic(&buf_dirty, 0, TEST_BITS) };
-        assert_ne!(
-            first_dirty, 5,
-            "Dirty buffer should have corrupted values (got {}, expected 5)",
-            first_dirty
-        );
+        // Verify all values are 5 (not 0xF or some OR'd combination)
+        for i in 0..100 {
+            let val = unsafe { get_index_generic(&buffer, i, TEST_BITS) };
+            assert_eq!(val, 5, "Index {} should be 5 (read-modify-write)", i);
+        }
+
+        // Now overwrite with different values
+        for i in 0..100 {
+            unsafe {
+                set_index_generic(&mut buffer, i, (i % 16) as u16, TEST_BITS);
+            }
+        }
+
+        // Verify overwrite worked
+        for i in 0..100 {
+            let val = unsafe { get_index_generic(&buffer, i, TEST_BITS) };
+            assert_eq!(
+                val,
+                (i % 16) as u16,
+                "Index {} should be {} after overwrite",
+                i,
+                i % 16
+            );
+        }
     }
 
     // =========================================================================
