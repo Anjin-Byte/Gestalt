@@ -105,6 +105,34 @@ The current `BinaryChunk` stores a full `64^3` `u16` material array, which is fa
 - Keep `bits_per_voxel` in local variables and avoid bounds checks inside the hot loop.
 - Use `unsafe` with a single upfront bounds check per buffer. If the per-case memory footprint is proven correct, the inner loop can forgo bounds checks safely.
 
+### Phase 2.2: Macro-generated repack specialization
+To keep the hot loop branchless, generate per-case repack functions at compile time and dispatch once by `(old_bits, new_bits)`.
+
+Example (shape of generated functions):
+```rust
+#[inline]
+fn repack_3_5(src: &[u64], dst: &mut [u64]) {
+    let total = 64usize * 64 * 64;
+    let mut i = 0usize;
+    while i < total {
+        let idx = get_idx::<3>(src, i);
+        set_idx::<5>(dst, i, idx);
+        i += 1;
+    }
+}
+```
+
+Dispatch once per repack:
+```rust
+fn repack_dispatch(old_bits: u8, new_bits: u8, src: &[u64], dst: &mut [u64]) {
+    match (old_bits, new_bits) {
+        (3, 5) => repack_3_5(src, dst),
+        // ... all ordered pairs, old != new
+        _ => unreachable!("invalid repack"),
+    }
+}
+```
+
 ### Phase 3: Serialization and interop
 - Update any WASM bindings that expose chunk memory
 - Ensure `ChunkManager::populate_dense` remains efficient (batch insert, single repack at end)

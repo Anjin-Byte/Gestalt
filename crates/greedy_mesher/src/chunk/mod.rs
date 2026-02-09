@@ -78,6 +78,8 @@ pub mod stats;
 pub mod lru;
 pub mod budget;
 pub mod manager;
+pub mod palette_repack;
+pub mod palette_materials;
 
 // Re-export primary types
 pub use coord::ChunkCoord;
