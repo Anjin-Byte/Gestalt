@@ -12,8 +12,16 @@
 2. **Explicit over Implicit**: Prefer clear, verbose code over clever shortcuts
 3. **Debuggable by Default**: Code structure should make debugging straightforward
 4. **No Monoliths**: Split large files before they become unmanageable
+5. **Test-Driven Confidence**: New logic must be covered by rigorous tests and pass reliably
 
 ---
+
+## Testing Standards
+
+- **Required**: Any new logic must include tests that cover expected behavior, edge cases, and failure modes.
+- **Regression Safety**: Fixes should add a test that would have failed before the change.
+- **Determinism**: Tests must be deterministic and not depend on timing, network, or external state.
+- **Scope**: Prefer unit tests for logic and targeted integration tests for cross-module behavior.
 
 ## File Organization
 

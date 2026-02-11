@@ -26,7 +26,7 @@ import type {
 
 declare const self: DedicatedWorkerGlobalScope;
 
-type WasmModule = typeof import("../wasm/wasm_greedy_mesher/wasm_greedy_mesher");
+type WasmModule = typeof import("../../../wasm/wasm_greedy_mesher/wasm_greedy_mesher");
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type WasmChunkManagerInstance = any;
@@ -307,7 +307,7 @@ const isCancelled = (jobId: number): boolean => currentJobId !== jobId;
 
 const handleInit = async (): Promise<void> => {
   try {
-    wasmModule = await import("../wasm/wasm_greedy_mesher/wasm_greedy_mesher");
+    wasmModule = await import("../../../wasm/wasm_greedy_mesher/wasm_greedy_mesher");
     await wasmModule.default();
     reply({ type: "init-done", version: wasmModule.get_version() });
   } catch (error) {

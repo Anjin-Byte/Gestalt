@@ -43,6 +43,8 @@ export type ModuleOutput =
 export type RunRequest = {
   params: Record<string, unknown>;
   frameId: number;
+  signal: AbortSignal;
+  moduleId: string;
 };
 
 export type Logger = {
@@ -130,7 +132,9 @@ export interface TestbedModule {
   id: string;
   name: string;
   init: (ctx: ModuleContext) => Promise<void> | void;
+  activate?: (ctx: ModuleContext) => Promise<void> | void;
   ui?: (api: UiApi) => void;
   run: (job: RunRequest) => Promise<ModuleOutput[]>;
+  deactivate?: () => Promise<void> | void;
   dispose?: () => void;
 }

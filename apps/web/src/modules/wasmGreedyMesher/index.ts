@@ -11,91 +11,27 @@
  * Meshing runs in a dedicated Web Worker so the main thread stays responsive.
  */
 
-import type { TestbedModule, ModuleOutput } from "./types";
-import { MesherClient } from "../workers/mesherClient";
-import { ChunkManagerClient } from "../workers/chunkManagerClient";
-import type { DebugColorMode } from "../workers/mesherTypes";
+import type { TestbedModule, ModuleOutput } from "../types";
+import { MesherClient } from "./workers/mesherClient";
+import { ChunkManagerClient } from "./workers/chunkManagerClient";
+import type { DebugColorMode } from "./workers/mesherTypes";
+import { getDebugOverlay } from "../../ui/debugOverlay";
 import {
-  getDebugOverlay,
-  formatBytes,
-  formatMs,
-  formatPercent,
-  formatCount,
-} from "../ui/debugOverlay";
-
-/** Chunk size constant (must match Rust CS = 62). */
-const CS = 62;
-
-type MesherParams = {
-  gridSize: number;
-  voxelSize: number;
-  pattern: "solid" | "checkerboard" | "sphere" | "noise" | "perlin" | "simplex";
-  simplexScale: number;
-  simplexOctaves: number;
-  simplexThreshold: number;
-  sliceX: number;
-  sliceY: number;
-  sliceZ: number;
-  sliceEnabled: boolean;
-  debugWireframe: boolean;
-  debugColorMode: DebugColorMode;
-  debugChunkBounds: boolean;
-};
-
-/**
- * Generate wireframe line positions for a box from min to max.
- * Returns 12 edges × 2 endpoints × 3 floats = 72 floats.
- */
-const generateBoxWireframe = (
-  minX: number, minY: number, minZ: number,
-  maxX: number, maxY: number, maxZ: number,
-): Float32Array => {
-  // 8 corners of the box
-  const c = [
-    [minX, minY, minZ], // 0: ---
-    [maxX, minY, minZ], // 1: +--
-    [maxX, maxY, minZ], // 2: ++-
-    [minX, maxY, minZ], // 3: -+-
-    [minX, minY, maxZ], // 4: --+
-    [maxX, minY, maxZ], // 5: +-+
-    [maxX, maxY, maxZ], // 6: +++
-    [minX, maxY, maxZ], // 7: -++
-  ];
-
-  // 12 edges as pairs of corner indices
-  const edges = [
-    [0,1],[1,2],[2,3],[3,0], // bottom face
-    [4,5],[5,6],[6,7],[7,4], // top face
-    [0,4],[1,5],[2,6],[3,7], // verticals
-  ];
-
-  const positions = new Float32Array(72);
-  let idx = 0;
-  for (const [a, b] of edges) {
-    positions[idx++] = c[a][0]; positions[idx++] = c[a][1]; positions[idx++] = c[a][2];
-    positions[idx++] = c[b][0]; positions[idx++] = c[b][1]; positions[idx++] = c[b][2];
-  }
-  return positions;
-};
-
-const clamp = (value: number, min: number, max: number) =>
-  Math.min(Math.max(value, min), max);
-
-const asNumber = (value: unknown, fallback: number): number => {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
-};
-
-const asInt = (value: unknown, fallback: number): number =>
-  Math.floor(asNumber(value, fallback));
-
-const asBool = (value: unknown, fallback: boolean): boolean =>
-  typeof value === "boolean" ? value : fallback;
-
-const asString = (value: unknown, fallback: string): string =>
-  typeof value === "string" ? value : fallback;
-
-const DIR_LABELS = ["+Y", "-Y", "+X", "-X", "+Z", "-Z"];
+  CS,
+  DIR_LABELS,
+  asBool,
+  asInt,
+  asNumber,
+  asString,
+  clamp,
+  clearOverlay,
+  generateBoxWireframe,
+  type MesherParams,
+  updateChunksOverlay,
+  updateMemoryOverlay,
+  updatePerformanceOverlay
+} from "./helpers";
+import { runMultiChunk } from "./multiChunk";
 
 export const createWasmGreedyMesherModule = (): TestbedModule => {
   let mesherClient: MesherClient | null = null;
@@ -105,175 +41,24 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
   let statusText = "Not loaded";
   let updateStatus: ((value: string) => void) | null = null;
 
-  /** Push performance stats to the debug overlay. */
-  const updatePerformanceOverlay = (genMs: number, meshMs: number, extras?: string) => {
-    const overlay = getDebugOverlay();
-    if (!overlay) return;
-    const entries = [
-      { label: "Generate", value: formatMs(genMs) },
-      { label: "Mesh", value: formatMs(meshMs) },
-    ];
-    if (extras) {
-      entries.push({ label: "Info", value: extras });
-    }
-    overlay.update("performance", entries);
+  const releaseResources = () => {
+    chunkManagerClient?.dispose();
+    chunkManagerClient = null;
+    chunkManagerReady = false;
+    lastVoxelSize = null;
+    mesherClient?.dispose();
+    mesherClient = null;
   };
 
-  /** Push memory stats to the debug overlay. */
-  const updateMemoryOverlay = (
-    voxelBytes: number,
-    meshBytes: number,
-    compressionRatio: number,
-    bitsPerVoxel: number,
-  ) => {
-    const overlay = getDebugOverlay();
-    if (!overlay) return;
-    overlay.update("memory", [
-      { label: "Voxel", value: formatBytes(voxelBytes) },
-      { label: "Mesh", value: formatBytes(meshBytes) },
-      { label: "Total", value: formatBytes(voxelBytes + meshBytes) },
-      { label: "Compression", value: formatPercent(compressionRatio) },
-      { label: "Bits/Voxel", value: bitsPerVoxel.toFixed(1) },
-    ]);
-  };
-
-  /** Push chunk stats to the debug overlay. */
-  const updateChunksOverlay = (
-    chunkCount: number,
-    triangles: number,
-    vertices: number,
-    quads?: number,
-  ) => {
-    const overlay = getDebugOverlay();
-    if (!overlay) return;
-    const entries = [
-      { label: "Chunks", value: String(chunkCount) },
-      { label: "Triangles", value: formatCount(triangles) },
-      { label: "Vertices", value: formatCount(vertices) },
-    ];
-    if (quads !== undefined) {
-      entries.push({ label: "Quads", value: formatCount(quads) });
+  const ensureClients = async () => {
+    if (mesherClient && chunkManagerClient) {
+      return;
     }
-    overlay.update("chunks", entries);
-  };
-
-  /** Clear all overlay sections. */
-  const clearOverlay = () => {
-    const overlay = getDebugOverlay();
-    overlay?.clearAll();
-  };
-
-  /**
-   * Multi-chunk path for grids larger than CS (62).
-   * Uses ChunkManager to distribute voxels across multiple chunks.
-   */
-  const runMultiChunk = async (
-    params: MesherParams,
-    _wantsDebug: boolean,
-  ): Promise<ModuleOutput[]> => {
-    if (!chunkManagerClient) {
-      statusText = "ChunkManager not available";
-      updateStatus?.(statusText);
-      return [];
-    }
-
-    try {
-      // Lazy init or reinit if voxelSize changed
-      if (!chunkManagerReady || lastVoxelSize !== params.voxelSize) {
-        updateStatus?.("Initializing chunk manager...");
-        await chunkManagerClient.initChunkManager(
-          { maxChunksPerFrame: 10000, maxTimeMs: 60000, voxelSize: params.voxelSize },
-          { maxBytes: 512 * 1024 * 1024, highWatermark: 0.9, lowWatermark: 0.7, minChunks: 4 },
-        );
-        chunkManagerReady = true;
-        lastVoxelSize = params.voxelSize;
-      }
-
-      updateStatus?.("Generating & meshing chunks...");
-
-      const result = await chunkManagerClient.generateAndPopulate({
-        gridSize: params.gridSize,
-        voxelSize: params.voxelSize,
-        pattern: params.pattern,
-        simplexScale: params.simplexScale,
-        simplexOctaves: params.simplexOctaves,
-        simplexThreshold: params.simplexThreshold,
-      });
-
-      const outputs: ModuleOutput[] = [];
-
-      // Calculate totals
-      let totalTriangles = 0;
-      let totalVertices = 0;
-
-      // Convert each chunk mesh to ModuleOutput
-      // Note: Positions are already in world-space (Rust applies chunk origin offset)
-      for (const mesh of result.swappedMeshes) {
-        totalTriangles += mesh.triangleCount;
-        totalVertices += mesh.vertexCount;
-
-        outputs.push({
-          kind: "mesh",
-          mesh: {
-            positions: mesh.positions,
-            indices: mesh.indices,
-            normals: mesh.normals,
-          },
-          label: `Chunk (${mesh.coord.x},${mesh.coord.y},${mesh.coord.z})`,
-        });
-      }
-
-      // Add chunk boundary wireframes if enabled
-      if (params.debugChunkBounds && result.swappedMeshes.length > 0) {
-        for (const mesh of result.swappedMeshes) {
-          const offsetX = mesh.coord.x * CS * params.voxelSize;
-          const offsetY = mesh.coord.y * CS * params.voxelSize;
-          const offsetZ = mesh.coord.z * CS * params.voxelSize;
-          const chunkExtent = CS * params.voxelSize;
-
-          const boundsPositions = generateBoxWireframe(
-            offsetX, offsetY, offsetZ,
-            offsetX + chunkExtent, offsetY + chunkExtent, offsetZ + chunkExtent,
-          );
-          outputs.push({
-            kind: "lines",
-            lines: { positions: boundsPositions, color: [0.0, 1.0, 1.0] },
-            label: `Bounds (${mesh.coord.x},${mesh.coord.y},${mesh.coord.z})`,
-          });
-        }
-      }
-
-      statusText = `Chunks: ${result.chunksRebuilt} | Tri: ${totalTriangles} | Vtx: ${totalVertices}`;
-      updateStatus?.(statusText);
-
-      // Update debug overlay with performance stats
-      updatePerformanceOverlay(result.genTime, result.meshTime);
-      updateChunksOverlay(result.chunksRebuilt, totalTriangles, totalVertices);
-
-      // Fetch and display memory/palette stats
-      try {
-        const debugInfo = await chunkManagerClient.debugInfo();
-        updateMemoryOverlay(
-          debugInfo.voxelMemoryBytes,
-          debugInfo.meshMemoryBytes,
-          debugInfo.averageCompressionRatio,
-          debugInfo.averageBitsPerVoxel,
-        );
-      } catch {
-        // Memory stats unavailable
-      }
-
-      return outputs;
-    } catch (error) {
-      const msg = (error as Error).message;
-      if (msg === "superseded") {
-        return [];
-      }
-      statusText = `Error: ${msg}`;
-      updateStatus?.(statusText);
-      clearOverlay();
-      return [];
-    }
+    mesherClient = new MesherClient();
+    const version = await mesherClient.init();
+    chunkManagerClient = new ChunkManagerClient(mesherClient.getWorker());
+    statusText = `Loaded v${version} (worker)`;
+    updateStatus?.(statusText);
   };
 
   return {
@@ -283,12 +68,7 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
     init: async (ctx) => {
       ctx.logger.info("[greedy-mesher] init start");
       try {
-        mesherClient = new MesherClient();
-        const version = await mesherClient.init();
-        // Create ChunkManagerClient sharing the same worker
-        chunkManagerClient = new ChunkManagerClient(mesherClient.getWorker());
-        statusText = `Loaded v${version} (worker)`;
-        updateStatus?.(statusText);
+        await ensureClients();
         ctx.logger.info(`[greedy-mesher] init complete: ${statusText}`);
       } catch (error) {
         statusText = "Missing (run pnpm build:wasm)";
@@ -299,6 +79,9 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
         mesherClient?.dispose();
         mesherClient = null;
       }
+    },
+    activate: async () => {
+      await ensureClients();
     },
 
     ui: (api) => {
@@ -442,7 +225,27 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
 
       // Route to multi-chunk path for large grids
       if (params.gridSize > CS) {
-        return runMultiChunk(params, wantsDebug);
+        const multiChunkState = {
+          chunkManagerClient,
+          chunkManagerReady,
+          lastVoxelSize,
+          statusText,
+          updateStatus
+        };
+        const outputs = await runMultiChunk(
+          params,
+          multiChunkState,
+          {
+            updatePerformanceOverlay,
+            updateChunksOverlay,
+            updateMemoryOverlay,
+            clearOverlay
+          }
+        );
+        chunkManagerReady = multiChunkState.chunkManagerReady;
+        lastVoxelSize = multiChunkState.lastVoxelSize;
+        statusText = multiChunkState.statusText;
+        return outputs;
       }
 
       try {
@@ -554,13 +357,11 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
       }
     },
 
+    deactivate: () => {
+      releaseResources();
+    },
     dispose: () => {
-      chunkManagerClient?.dispose();
-      chunkManagerClient = null;
-      chunkManagerReady = false;
-      lastVoxelSize = null;
-      mesherClient?.dispose();
-      mesherClient = null;
+      releaseResources();
     },
   };
 };

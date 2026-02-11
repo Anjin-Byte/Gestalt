@@ -50,6 +50,7 @@ Quick navigation for the voxel-to-mesh rendering architecture.
 | [chunk-management-system.md](chunk-management-system.md) | Dirty tracking, state machine | ChunkState enum, RebuildQueue, Version consistency |
 | [threejs-buffer-management.md](threejs-buffer-management.md) | GPU buffer lifecycle | ChunkMeshPool, Double-buffering, Clipping planes |
 | [development-guidelines.md](development-guidelines.md) | Coding standards | File limits, Function design, Error handling |
+| [module-system-lifecycle.md](module-system-lifecycle.md) | Module host lifecycle and resource ownership | Activation/deactivation, cancellation, cleanup |
 | [typescript-architecture.md](typescript-architecture.md) | TypeScript patterns and debugging | Branded types, State machines, Logger, Inspector |
 | [greedy-mesher-crate-structure.md](greedy-mesher-crate-structure.md) | Rust crate organization | Module structure, WASM bindings, Build integration |
 | [instanced-mesh-chunking-debug-report.md](instanced-mesh-chunking-debug-report.md) | Historical: WebGPU bug investigation | Debug attempts (led to greedy mesh pivot) |
@@ -103,6 +104,11 @@ Quick navigation for the voxel-to-mesh rendering architecture.
 1. [typescript-architecture.md](typescript-architecture.md) - **Start here**: Type patterns, state machines, debugging
 2. [development-guidelines.md](development-guidelines.md) - General coding standards
 3. [chunk-management-system.md](chunk-management-system.md) - State machine design (Rust reference)
+
+### Working on module/testbed lifecycle?
+1. [module-system-lifecycle.md](module-system-lifecycle.md) - **Start here**: Activation model and ownership
+2. [development-guidelines.md](development-guidelines.md) - File/function size constraints
+3. [typescript-architecture.md](typescript-architecture.md) - Type-level and debugging patterns
 
 ### Working on materials/textures?
 1. [ADR-0007](adr/0007-material-strategy.md) - Material strategy decision

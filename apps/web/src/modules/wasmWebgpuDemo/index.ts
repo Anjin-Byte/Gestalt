@@ -1,4 +1,4 @@
-import type { ModuleOutput, TestbedModule } from "./types";
+import type { ModuleOutput, TestbedModule } from "../types";
 
 type WasmWebgpu = {
   default?: () => Promise<unknown>;
@@ -76,43 +76,49 @@ export const createWasmWebgpuDemoModule = (): TestbedModule => {
     paramsView.setFloat32(4, radius, true);
     device.queue.writeBuffer(uniformBuffer, 0, params);
 
-    const bindGroup = device.createBindGroup({
-      layout: bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: storageBuffer } },
-        { binding: 1, resource: { buffer: uniformBuffer } }
-      ]
-    });
-
-    const commandEncoder = device.createCommandEncoder();
-    const pass = commandEncoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(Math.ceil(count / 64));
-    pass.end();
-
     const readBuffer = device.createBuffer({
       size: bufferSize,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
     });
-    commandEncoder.copyBufferToBuffer(storageBuffer, 0, readBuffer, 0, bufferSize);
-    device.queue.submit([commandEncoder.finish()]);
+    try {
+      const bindGroup = device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: storageBuffer } },
+          { binding: 1, resource: { buffer: uniformBuffer } }
+        ]
+      });
 
-    await readBuffer.mapAsync(GPUMapMode.READ);
-    const mapped = readBuffer.getMappedRange();
-    const data = new Float32Array(mapped.slice(0));
-    readBuffer.unmap();
+      const commandEncoder = device.createCommandEncoder();
+      const pass = commandEncoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.dispatchWorkgroups(Math.ceil(count / 64));
+      pass.end();
 
-    const positions = new Float32Array(count * 3);
-    for (let i = 0; i < count; i += 1) {
-      const src = i * 4;
-      const dst = i * 3;
-      positions[dst] = data[src];
-      positions[dst + 1] = data[src + 1];
-      positions[dst + 2] = data[src + 2];
+      commandEncoder.copyBufferToBuffer(storageBuffer, 0, readBuffer, 0, bufferSize);
+      device.queue.submit([commandEncoder.finish()]);
+
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = readBuffer.getMappedRange();
+      const data = new Float32Array(mapped.slice(0));
+      readBuffer.unmap();
+
+      const positions = new Float32Array(count * 3);
+      for (let i = 0; i < count; i += 1) {
+        const src = i * 4;
+        const dst = i * 3;
+        positions[dst] = data[src];
+        positions[dst + 1] = data[src + 1];
+        positions[dst + 2] = data[src + 2];
+      }
+
+      return positions;
+    } finally {
+      (readBuffer as unknown as { destroy?: () => void }).destroy?.();
+      (uniformBuffer as unknown as { destroy?: () => void }).destroy?.();
+      (storageBuffer as unknown as { destroy?: () => void }).destroy?.();
     }
-
-    return positions;
   };
 
   return {
@@ -121,7 +127,7 @@ export const createWasmWebgpuDemoModule = (): TestbedModule => {
     init: async (ctx) => {
       ctxRef = ctx;
       try {
-        const module = await import("../wasm/wasm_webgpu_demo/wasm_webgpu_demo.js");
+        const module = await import("../../wasm/wasm_webgpu_demo/wasm_webgpu_demo.js");
         if (module.default) {
           await module.default();
         }
@@ -196,6 +202,11 @@ export const createWasmWebgpuDemoModule = (): TestbedModule => {
       };
 
       return [output];
+    },
+    deactivate: () => {
+      pipeline = null;
+      bindGroupLayout = null;
+      device = null;
     }
   };
 };

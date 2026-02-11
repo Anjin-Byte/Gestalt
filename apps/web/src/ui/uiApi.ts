@@ -9,6 +9,10 @@ export const createUiApi = (
 
   const clear = () => {
     container.innerHTML = "";
+    textNodes.clear();
+    for (const key of Object.keys(values)) {
+      delete values[key];
+    }
   };
 
   const addLabel = (labelText: string) => {

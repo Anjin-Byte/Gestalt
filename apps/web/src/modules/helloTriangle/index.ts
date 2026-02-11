@@ -1,4 +1,4 @@
-import type { MeshDescriptor, ModuleOutput, TestbedModule } from "./types";
+import type { MeshDescriptor, ModuleOutput, TestbedModule } from "../types";
 
 const createTriangleMesh = (): MeshDescriptor => {
   const positions = new Float32Array([
