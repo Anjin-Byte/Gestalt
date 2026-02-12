@@ -6,21 +6,32 @@ import {
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
+  Vector3,
   WebGLRenderer
 } from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import WebGPURenderer from "three/src/renderers/webgpu/WebGPURenderer.js";
+import { FreeCamControls } from "./freeCamControls";
 
 export type BackendOptions = {
   testMode: boolean;
   preferredRenderer: "auto" | "webgpu" | "webgl";
 };
 
+export type ViewerControls = {
+  target: Vector3;
+  enableRotate: boolean;
+  enablePan: boolean;
+  enableZoom: boolean;
+  setEnabled: (enabled: boolean) => void;
+  update: () => void;
+  dispose: () => void;
+};
+
 export type ViewerBackend = {
   renderer: WebGLRenderer | WebGPURenderer;
   scene: Scene;
   camera: PerspectiveCamera;
-  controls: OrbitControls;
+  controls: ViewerControls;
   isWebGPU: boolean;
   resize: (width: number, height: number) => void;
   render: () => void;
@@ -64,10 +75,8 @@ export const createThreeBackend = async (
   const camera = new PerspectiveCamera(60, 1, 0.1, 500);
   camera.position.set(4, 4, 6);
 
-  let controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = !options.testMode;
+  let controls = new FreeCamControls(camera, renderer.domElement);
   controls.target.set(0, 0, 0);
-  controls.update();
 
   const baseLights = {
     ambient: 0.7,
@@ -110,18 +119,15 @@ export const createThreeBackend = async (
     },
     rebindControls: (domElement: HTMLElement) => {
       const target = controls.target.clone();
-      const damping = controls.enableDamping;
       const enablePan = controls.enablePan;
       const enableZoom = controls.enableZoom;
       const enableRotate = controls.enableRotate;
       controls.dispose();
-      controls = new OrbitControls(camera, domElement);
-      controls.enableDamping = damping;
+      controls = new FreeCamControls(camera, domElement);
       controls.enablePan = enablePan;
       controls.enableZoom = enableZoom;
       controls.enableRotate = enableRotate;
       controls.target.copy(target);
-      controls.update();
     },
     setExposure: (value: number) => {
       renderer.toneMappingExposure = value;

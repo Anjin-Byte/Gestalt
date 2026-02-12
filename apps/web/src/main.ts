@@ -39,6 +39,8 @@ const app = async () => {
   const savedPreference =
     (localStorage.getItem("rendererPreference") as "auto" | "webgpu" | "webgl" | null) ?? "auto";
 
+  document.body.classList.add("viewport-full");
+
   // === Viewer Setup ===
   const backend = await createThreeBackend(canvas, {
     testMode,
@@ -46,8 +48,57 @@ const app = async () => {
   });
   const viewer = new Viewer(backend, { overlay, testMode });
 
-  // Initialize debug overlay
+  const settingsOverlay = document.createElement("div");
+  settingsOverlay.id = "settings-overlay";
+  settingsOverlay.className = "settings-overlay";
+  settingsOverlay.innerHTML = `
+    <div class="settings-overlay__panel">
+      <div class="settings-overlay__header">
+        <span>Settings</span>
+        <span class="settings-overlay__hint">Press E to close</span>
+      </div>
+      <div class="settings-overlay__body"></div>
+    </div>
+  `;
   const viewport = canvas.parentElement;
+  if (viewport) {
+    viewport.appendChild(settingsOverlay);
+  }
+
+  const settingsBody = settingsOverlay.querySelector(
+    ".settings-overlay__body"
+  ) as HTMLElement | null;
+  if (!settingsBody) {
+    throw new Error("Settings overlay body missing.");
+  }
+
+  let settingsOpen = false;
+  const setSettingsOpen = (open: boolean) => {
+    settingsOpen = open;
+    settingsOverlay.dataset.open = open ? "true" : "false";
+    settingsOverlay.style.display = open ? "flex" : "none";
+    backend.controls.setEnabled(!open);
+  };
+  setSettingsOpen(false);
+
+  const isTypingTarget = (target: EventTarget | null) => {
+    if (!(target instanceof HTMLElement)) return false;
+    const tag = target.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  };
+
+  window.addEventListener("keydown", (event) => {
+    if (event.code !== "KeyE") {
+      return;
+    }
+    if (isTypingTarget(event.target)) {
+      return;
+    }
+    event.preventDefault();
+    setSettingsOpen(!settingsOpen);
+  });
+
+  // Initialize debug overlay
   if (viewport) {
     initDebugOverlay({ container: viewport, visible: true });
   }
@@ -116,22 +167,31 @@ const app = async () => {
   // === Module System ===
   const ctx = { requestGpuDevice, logger, baseUrl: import.meta.env.BASE_URL };
 
+  const moduleSection = document.createElement("section");
+  moduleSection.className = "settings-overlay__section";
+  const moduleSectionTitle = document.createElement("div");
+  moduleSectionTitle.className = "settings-overlay__section-title";
+  moduleSectionTitle.textContent = "Module";
+  moduleSection.appendChild(moduleSectionTitle);
+
   const moduleSelectLabel = document.createElement("label");
   moduleSelectLabel.textContent = "Active Module";
-  modulePanel.appendChild(moduleSelectLabel);
+  moduleSection.appendChild(moduleSelectLabel);
 
   const moduleSelect = document.createElement("select");
   moduleSelect.dataset.testid = "module-select";
-  modulePanel.appendChild(moduleSelect);
+  moduleSection.appendChild(moduleSelect);
 
   const runButton = document.createElement("button");
   runButton.textContent = "Run Module";
   runButton.dataset.testid = "run-module";
-  modulePanel.appendChild(runButton);
+  moduleSection.appendChild(runButton);
 
   const moduleControls = document.createElement("div");
   moduleControls.id = "module-controls";
-  modulePanel.appendChild(moduleControls);
+  moduleSection.appendChild(moduleControls);
+
+  settingsBody.appendChild(moduleSection);
 
   const modules = createDefaultModules();
   const host = new ModuleHost(modules, moduleControls, ctx, (outputs) => {
