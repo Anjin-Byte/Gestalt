@@ -1,7 +1,14 @@
+> **SUPERSEDED** — This ADR documents the problem context that motivated the integration work.
+> The integration decision (Architecture B — GPU-compact design) is recorded in
+> [ADR-0009](../../voxelizer-integration/adr/0009-architecture-b.md).
+> This ADR is retained for historical context only. Do not implement from it.
+
+---
+
 # 0005 - Voxelizer to Mesher Integration
 
 ## Status
-Proposed
+Superseded by [ADR-0009](../../voxelizer-integration/adr/0009-architecture-b.md)
 
 ## Context
 

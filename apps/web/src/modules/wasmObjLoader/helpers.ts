@@ -1,11 +1,23 @@
 export const parseObjFallback = (input: string) => {
   const positions: number[] = [];
   const indices: number[] = [];
+  // Group 0 is always "(default)" — covers faces before the first usemtl.
+  const materialGroupNames: string[] = ["(default)"];
+  const triangleMaterials: number[] = [];
+  let currentMaterial = 0;
 
   const lines = input.split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith("v ")) {
+    if (trimmed.startsWith("usemtl ")) {
+      const name = trimmed.slice("usemtl ".length).trim();
+      let idx = materialGroupNames.indexOf(name);
+      if (idx === -1) {
+        idx = materialGroupNames.length;
+        materialGroupNames.push(name);
+      }
+      currentMaterial = idx;
+    } else if (trimmed.startsWith("v ")) {
       const parts = trimmed.split(/\s+/);
       if (parts.length >= 4) {
         const x = Number(parts[1]);
@@ -24,8 +36,12 @@ export const parseObjFallback = (input: string) => {
 
       if (faceIndices.length >= 3) {
         const base = faceIndices[0];
+        const outTriCount = faceIndices.length - 2;
         for (let i = 1; i < faceIndices.length - 1; i += 1) {
           indices.push(base, faceIndices[i], faceIndices[i + 1]);
+        }
+        for (let t = 0; t < outTriCount; t += 1) {
+          triangleMaterials.push(currentMaterial);
         }
       }
     }
@@ -33,8 +49,28 @@ export const parseObjFallback = (input: string) => {
 
   return {
     positions: new Float32Array(positions),
-    indices: new Uint32Array(indices)
+    indices: new Uint32Array(indices),
+    materialGroupNames,
+    triangleMaterials: new Uint32Array(triangleMaterials)
   };
+};
+
+/**
+ * Convert material group parse results into the flat Uint16Array material_table
+ * required by voxelize_and_apply (spec §2.3).
+ *
+ * MaterialId is 1-based: group index 0 → MaterialId 1, group index 1 → MaterialId 2, etc.
+ * MaterialId 0 (MATERIAL_EMPTY) is never emitted.
+ */
+export const buildMaterialTable = (
+  triangleMaterials: Uint32Array,
+  _materialGroupNames: string[]
+): Uint16Array => {
+  const table = new Uint16Array(triangleMaterials.length);
+  for (let i = 0; i < triangleMaterials.length; i += 1) {
+    table[i] = triangleMaterials[i] + 1;
+  }
+  return table;
 };
 
 export const buildMatrixFallback = (

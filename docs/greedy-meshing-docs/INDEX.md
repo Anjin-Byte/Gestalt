@@ -63,10 +63,11 @@ Quick navigation for the voxel-to-mesh rendering architecture.
 | [ADR-0002](adr/0002-module-contract.md) | Module contract | Accepted |
 | [ADR-0003](adr/0003-binary-greedy-meshing.md) | Binary greedy meshing algorithm | Accepted |
 | [ADR-0004](adr/0004-chunk-size-64.md) | 64³ chunk size | Accepted |
-| [ADR-0005](adr/0005-voxelizer-to-mesher-integration.md) | Voxelizer to mesher integration | Proposed |
+| [ADR-0005](adr/0005-voxelizer-to-mesher-integration.md) | Voxelizer to mesher integration gap analysis | **Superseded** by [ADR-0009](../voxelizer-integration/adr/0009-architecture-b.md) |
 | [ADR-0006](adr/0006-lod-strategy.md) | Level of Detail (LOD) strategy | Proposed |
 | [ADR-0007](adr/0007-material-strategy.md) | Material strategy (textures, per-voxel) | Proposed |
 | [ADR-0008](adr/0008-design-gap-mitigations.md) | Design gap mitigations (12 issues) | Proposed |
+| [ADR-0009](../voxelizer-integration/adr/0009-architecture-b.md) | GPU-compact Architecture B for voxelizer→chunk integration | Accepted |
 
 ---
 
@@ -96,9 +97,16 @@ Quick navigation for the voxel-to-mesh rendering architecture.
 3. [implementation-plan.md](implementation-plan.md#performance-benchmarks) - Benchmark thresholds and specs
 
 ### Integrating voxelizer with mesher?
-1. [ADR-0005](adr/0005-voxelizer-to-mesher-integration.md) - **Start here**: Gap analysis and integration plan
-2. [architecture-addendum.md](architecture-addendum.md#2-voxelizer--chunk-conversion) - Conversion approach
-3. [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md#part-2-input-conversion) - Input format requirements
+
+> The voxelizer integration has its own dedicated documentation section.
+> See **[`docs/voxelizer-integration/`](../voxelizer-integration/INDEX.md)** — start with `INDEX.md`.
+
+1. [`../voxelizer-integration/INDEX.md`](../voxelizer-integration/INDEX.md) - **Start here**: navigation hub for all integration docs
+2. [`../voxelizer-integration/philosophy.md`](../voxelizer-integration/philosophy.md) - Canonical store principle and why Architecture B
+3. [`../voxelizer-integration/adr/0009-architecture-b.md`](../voxelizer-integration/adr/0009-architecture-b.md) - Formal decision record (supersedes ADR-0005)
+4. [`../voxelizer-integration/design/requirements.md`](../voxelizer-integration/design/requirements.md) - What the system must satisfy
+5. [`../voxelizer-integration/spec/wasm-api.md`](../voxelizer-integration/spec/wasm-api.md) - WASM API signatures and worker protocol
+6. [`../voxelizer-integration/impl/overview.md`](../voxelizer-integration/impl/overview.md) - File-by-file change map
 
 ### Working on TypeScript layer?
 1. [typescript-architecture.md](typescript-architecture.md) - **Start here**: Type patterns, state machines, debugging
@@ -112,8 +120,9 @@ Quick navigation for the voxel-to-mesh rendering architecture.
 
 ### Working on materials/textures?
 1. [ADR-0007](adr/0007-material-strategy.md) - Material strategy decision
-2. [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md) - UV generation context
-3. [typescript-architecture.md](typescript-architecture.md#resource-lifecycle) - Three.js resource management
+2. [`../voxelizer-integration/spec/material-pipeline.md`](../voxelizer-integration/spec/material-pipeline.md) - Material flow from OBJ to ChunkManager palette
+3. [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md) - UV generation context
+4. [typescript-architecture.md](typescript-architecture.md#resource-lifecycle) - Three.js resource management
 
 ### Reviewing design robustness?
 1. [ADR-0008](adr/0008-design-gap-mitigations.md) - **Start here**: All 12 gap mitigations
@@ -171,7 +180,7 @@ All requirements are in [voxel-mesh-architecture.md](voxel-mesh-architecture.md)
 | `VoxelGridSpec` | Grid origin, size, dimensions | `crates/voxelizer/src/core.rs` |
 | `GpuVoxelizer` | WebGPU voxelization engine | `crates/voxelizer/src/gpu.rs` |
 
-> ⚠️ **Note:** These two type systems are incompatible. See [ADR-0005](adr/0005-voxelizer-to-mesher-integration.md) for integration plan.
+> ⚠️ **Note:** These two type systems are bridged by the voxelizer integration. See [`docs/voxelizer-integration/`](../voxelizer-integration/INDEX.md) for the current design.
 
 ### Performance Targets
 
@@ -242,6 +251,7 @@ See [greedy-mesher-crate-structure.md](greedy-mesher-crate-structure.md) for det
 
 | Date | Change |
 |------|--------|
+| 2026-02-22 | Moved 8 voxelizer-integration docs to `docs/voxelizer-integration/`; created new dedicated section with Architecture B as the authoritative design |
 | 2026-02-03 | Resolved materials integration: updated greedy-mesh-implementation-plan.md with 16-bit MaterialId, UVs, material_ids in MeshOutput and WASM bindings |
 | 2026-02-03 | Expanded ADR-0007 with complete MaterialRegistry implementation, atlas loading, and shader integration |
 | 2026-02-03 | Created ADR-0008 documenting 12 design gap mitigations (memory, backpressure, snapshots, etc.) |

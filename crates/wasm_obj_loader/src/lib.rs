@@ -1,4 +1,4 @@
-use js_sys::{Float32Array, Object, Reflect, Uint32Array};
+use js_sys::{Array, Float32Array, Object, Reflect, Uint32Array};
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 
@@ -16,10 +16,23 @@ pub fn log_info(message: &str) {
 pub fn parse_obj(input: String) -> Object {
     let mut positions: Vec<f32> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
+    // Group 0 is always "(default)" — covers faces that appear before the first usemtl.
+    let mut material_group_names: Vec<String> = vec!["(default)".to_string()];
+    let mut triangle_materials: Vec<u32> = Vec::new();
+    let mut current_material: u32 = 0;
 
     for line in input.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("v ") {
+        if trimmed.starts_with("usemtl ") {
+            let name = trimmed["usemtl ".len()..].trim();
+            current_material = if let Some(idx) = material_group_names.iter().position(|n| n == name) {
+                idx as u32
+            } else {
+                let idx = material_group_names.len() as u32;
+                material_group_names.push(name.to_string());
+                idx
+            };
+        } else if trimmed.starts_with("v ") {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
             if parts.len() >= 4 {
                 if let (Ok(x), Ok(y), Ok(z)) = (
@@ -46,16 +59,26 @@ pub fn parse_obj(input: String) -> Object {
                 }
 
                 if face_indices.len() >= 3 {
+                    let out_tri_count = face_indices.len() - 2;
                     let base = face_indices[0];
                     for i in 1..face_indices.len() - 1 {
                         indices.push(base);
                         indices.push(face_indices[i]);
                         indices.push(face_indices[i + 1]);
                     }
+                    for _ in 0..out_tri_count {
+                        triangle_materials.push(current_material);
+                    }
                 }
             }
         }
     }
+
+    let js_names = Array::new();
+    for name in &material_group_names {
+        js_names.push(&JsValue::from_str(name));
+    }
+    let tri_mats = Uint32Array::from(triangle_materials.as_slice());
 
     let positions = Float32Array::from(positions.as_slice());
     let indices = Uint32Array::from(indices.as_slice());
@@ -63,6 +86,8 @@ pub fn parse_obj(input: String) -> Object {
     let object = Object::new();
     Reflect::set(&object, &JsValue::from_str("positions"), &positions).ok();
     Reflect::set(&object, &JsValue::from_str("indices"), &indices).ok();
+    Reflect::set(&object, &JsValue::from_str("materialGroupNames"), &js_names).ok();
+    Reflect::set(&object, &JsValue::from_str("triangleMaterials"), &tri_mats).ok();
     object
 }
 

@@ -1,21 +1,72 @@
+//! Compressed sparse row (CSR) builders for triangle-to-cell assignment.
+//! (Conservative Uniform-Grid Binning with CSR (CUGB-CSR))
+//! This module precomputes spatial lookup tables that map grid partitions
+//! (tiles or bricks) to candidate triangle indices. The resulting CSR
+//! structures are used by voxelization paths to limit intersection work to
+//! relevant triangles per partition.
+//!
+//! Two partitioning schemes are supported:
+//! - [`TileTriangleCsr`]: regular tile grid from [`TileSpec`]
+//! - [`BrickTriangleCsr`]: sparse brick set derived from triangle coverage
+//!
+//! Both outputs follow the standard CSR shape:
+//! - `*_offsets.len() == cell_count + 1`
+//! - for cell `i`, triangle range is `tri_indices[offsets[i]..offsets[i + 1]]`
+//! - `offsets[0] == 0`
+//! - `offsets` is monotonic non-decreasing
+//! - `offsets.last() == tri_indices.len()`
+
 use glam::Vec3;
 
 use crate::core::{MeshInput, TileSpec, VoxelGridSpec};
 
+/// CSR mapping from regular tiles to candidate triangles.
+///
+/// Tile indexing uses X-major layout:
+/// `tile = tx + nx * ty + nx * ny * tz`.
 #[derive(Debug, Clone)]
 pub struct TileTriangleCsr {
+    /// Prefix-sum offsets into [`Self::tri_indices`], length = tile_count + 1.
     pub tile_offsets: Vec<u32>,
+    /// Flattened triangle index list for all tiles.
     pub tri_indices: Vec<u32>,
+    /// Number of triangle references per tile (same cardinality as tile_count).
+    ///
+    /// This is equivalent to `tile_offsets[i + 1] - tile_offsets[i]`.
     pub tri_counts: Vec<u32>,
 }
 
+/// CSR mapping from sparse bricks to candidate triangles.
+///
+/// Unlike [`TileTriangleCsr`], only bricks touched by at least one triangle
+/// are emitted.
 #[derive(Debug, Clone)]
 pub struct BrickTriangleCsr {
+    /// World-grid origins for each emitted brick, sorted by `(z, y, x)`.
     pub brick_origins: Vec<[u32; 3]>,
+    /// Prefix-sum offsets into [`Self::tri_indices`], length = brick_count + 1.
     pub brick_offsets: Vec<u32>,
+    /// Flattened triangle index list for all emitted bricks.
     pub tri_indices: Vec<u32>,
 }
 
+/// Build a dense tile CSR over the full tile lattice.
+///
+/// Each triangle is transformed into grid space, expanded by `epsilon`, and
+/// assigned to every overlapping tile in the regular tile grid.
+///
+/// This function performs a standard two-pass CSR build:
+/// 1. Count references per tile.
+/// 2. Prefix-sum counts to offsets, then scatter triangle indices.
+///
+/// # Parameters
+/// - `mesh`: source triangles in world space.
+/// - `grid`: voxel grid transform and bounds.
+/// - `tiles`: tile dimensions and lattice shape.
+/// - `epsilon`: conservative expansion margin in grid units.
+///
+/// # Returns
+/// A [`TileTriangleCsr`] that includes all tiles from `tiles`.
 pub fn build_tile_csr(
     mesh: &MeshInput,
     grid: &VoxelGridSpec,
@@ -157,6 +208,22 @@ pub fn build_tile_csr(
     }
 }
 
+/// Build a sparse brick CSR from triangle coverage.
+///
+/// Triangles are transformed into grid space, expanded by `epsilon`, and
+/// associated with every overlapping brick of size `brick_dim^3`.
+/// Only bricks with at least one triangle are emitted.
+///
+/// # Parameters
+/// - `mesh`: source triangles in world space.
+/// - `grid`: voxel grid transform and bounds.
+/// - `brick_dim`: edge length of each brick in voxels.
+/// - `epsilon`: conservative expansion margin in grid units.
+///
+/// # Returns
+/// A [`BrickTriangleCsr`] where:
+/// - `brick_origins` are sorted by `(z, y, x)` for stable iteration order.
+/// - `brick_offsets` and `tri_indices` follow CSR invariants.
 pub fn build_brick_csr(
     mesh: &MeshInput,
     grid: &VoxelGridSpec,

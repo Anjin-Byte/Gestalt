@@ -7,7 +7,12 @@ import {
 
 type WasmObjLoader = {
   default?: () => Promise<unknown>;
-  parse_obj?: (input: string) => { positions: Float32Array; indices: Uint32Array };
+  parse_obj?: (input: string) => {
+    positions: Float32Array;
+    indices: Uint32Array;
+    materialGroupNames: string[];
+    triangleMaterials: Uint32Array;
+  };
   wgsl_source?: () => string;
   transform_matrix?: (
     scale: number,
