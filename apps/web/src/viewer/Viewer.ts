@@ -120,7 +120,7 @@ export class Viewer {
     }
     const size = this.bounds.getSize(new Vector3()).length();
     const center = this.bounds.getCenter(new Vector3());
-    const distance = size * 0.55 + 1.0;
+    const distance = size * 0.001;
     this.backend.camera.position.copy(center.clone().add(new Vector3(distance, distance, distance)));
     this.backend.camera.lookAt(center);
     this.backend.controls.target.copy(center);

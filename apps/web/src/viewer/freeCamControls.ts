@@ -28,7 +28,7 @@ export class FreeCamControls {
     down: false
   };
   private lastUpdate = performance.now();
-  private readonly movementSpeed = 12;
+  private readonly movementSpeed = 0.1;
   private readonly lookSpeed = 1.75;
   private locked = false;
   private lastCursor = "";

@@ -276,6 +276,29 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
         updateStatus?.("No faces found in OBJ");
         return [];
       }
+
+      // Normalize positions: center at origin, scale max extent to 1.0.
+      // This keeps all models in a consistent coordinate space for camera/controls
+      // and improves f32 precision for the voxelizer.
+      const rawBounds = computeBounds(parsed.positions);
+      if (rawBounds) {
+        const cx = (rawBounds.min[0] + rawBounds.max[0]) * 0.5;
+        const cy = (rawBounds.min[1] + rawBounds.max[1]) * 0.5;
+        const cz = (rawBounds.min[2] + rawBounds.max[2]) * 0.5;
+        const extent = Math.max(
+          rawBounds.max[0] - rawBounds.min[0],
+          rawBounds.max[1] - rawBounds.min[1],
+          rawBounds.max[2] - rawBounds.min[2],
+        ) || 1;
+        const scale = 1.0 / extent;
+        const pos = parsed.positions;
+        for (let i = 0; i < pos.length; i += 3) {
+          pos[i]     = (pos[i]     - cx) * scale;
+          pos[i + 1] = (pos[i + 1] - cy) * scale;
+          pos[i + 2] = (pos[i + 2] - cz) * scale;
+        }
+      }
+
       logger?.(`[voxel-chunk-pipeline] parsed: ${parsed.positions.length / 3} verts, ${parsed.indices.length / 3} tris`);
 
       // Compute grid origin + voxel size

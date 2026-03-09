@@ -72,8 +72,7 @@ export const createThreeBackend = async (
   renderer.setPixelRatio(options.testMode ? 1 : window.devicePixelRatio);
 
   const scene = new Scene();
-  const camera = new PerspectiveCamera(60, 1, 0.1, 500);
-  camera.position.set(4, 4, 6);
+  const camera = new PerspectiveCamera(60, 1, 0.001, 500);
 
   let controls = new FreeCamControls(camera, renderer.domElement);
   controls.target.set(0, 0, 0);

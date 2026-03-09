@@ -1,6 +1,7 @@
 export type SampleModel = { id: string; label: string; file: string };
 
 export const defaultSampleModels: SampleModel[] = [
+  { id: "sponza", label: "Sponza", file: "models/sponza.obj" },
   { id: "cube", label: "Cube", file: "models/cube.obj" },
   { id: "pyramid", label: "Pyramid", file: "models/pyramid.obj" },
   { id: "bunny", label: "Bunny", file: "models/bunny.obj" },
@@ -8,7 +9,6 @@ export const defaultSampleModels: SampleModel[] = [
   { id: "elephant", label: "Elephant", file: "models/elephant.obj" },
   { id: "dragon", label: "Dragon", file: "models/dragon.obj" },
   { id: "chess-king", label: "Chess King", file: "models/ChessKing.obj" },
-  { id: "sponza", label: "Sponza", file: "models/sponza.obj" }
 ];
 
 export type VoxelParams = {
