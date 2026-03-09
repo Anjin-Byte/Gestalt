@@ -30,6 +30,7 @@ export class Viewer {
   private unlit = false;
   private stats = { triangles: 0, instances: 0 };
   private autoFrameOnNextOutput = true;
+  private chunkObjects = new Map<string, import("three").Object3D>();
 
   constructor(private backend: ViewerBackend, private options: ViewerOptions) {
     this.grid.visible = false;
@@ -91,6 +92,56 @@ export class Viewer {
     }
   }
 
+  /**
+   * Append outputs to the scene keyed by label.
+   * If a key already exists, the old object is disposed and replaced.
+   */
+  appendOutputs(outputs: ModuleOutput[]): void {
+    const wasEmpty = this.chunkObjects.size === 0;
+
+    for (const output of outputs) {
+      const key = output.label ?? `_anon_${this.chunkObjects.size}`;
+
+      // Replace existing object with same key
+      const existing = this.chunkObjects.get(key);
+      if (existing) {
+        this.disposeObject(existing);
+        this.outputGroup.remove(existing);
+      }
+
+      const { object } = buildOutputObject(output);
+      object.name = key;
+      this.outputGroup.add(object);
+      this.chunkObjects.set(key, object);
+    }
+
+    this.applyWireframe();
+    this.applyMaterialMode();
+    this.bounds.setFromObject(this.outputGroup);
+    this.boundsHelper.box.copy(this.bounds);
+    this.boundsHelper.visible = this.boundsVisible && !this.bounds.isEmpty();
+
+    // Auto-frame only on the first batch
+    if (wasEmpty && this.autoFrameOnNextOutput && !this.bounds.isEmpty()) {
+      this.frameObject();
+      this.autoFrameOnNextOutput = false;
+    }
+
+    this.stats = computeStats(this.outputGroup);
+    this.updateOverlay();
+  }
+
+  /** Clear all keyed chunk objects from the scene. */
+  clearChunkOutputs(): void {
+    for (const obj of this.chunkObjects.values()) {
+      this.disposeObject(obj);
+      this.outputGroup.remove(obj);
+    }
+    this.chunkObjects.clear();
+    this.stats = computeStats(this.outputGroup);
+    this.updateOverlay();
+  }
+
   setWireframe(enabled: boolean): void {
     this.wireframe = enabled;
     this.applyWireframe();
@@ -121,8 +172,8 @@ export class Viewer {
     const size = this.bounds.getSize(new Vector3()).length();
     const center = this.bounds.getCenter(new Vector3());
     const distance = size * 0.001;
-    this.backend.camera.position.copy(center.clone().add(new Vector3(distance, distance, distance)));
-    this.backend.camera.lookAt(center);
+    this.backend.camera.position.copy(center.clone().add(new Vector3(0.01, -0.10, .01)));
+    this.backend.camera.lookAt(new Vector3(0, -0.1, 0));
     this.backend.controls.target.copy(center);
     this.backend.controls.update();
   }
@@ -168,6 +219,21 @@ export class Viewer {
       } else if ((mesh.userData as { litMaterial?: unknown }).litMaterial) {
         mesh.material = (mesh.userData as { litMaterial?: unknown }).litMaterial as MeshBasicMaterial;
         delete (mesh.userData as { litMaterial?: unknown }).litMaterial;
+      }
+    });
+  }
+
+  private disposeObject(obj: import("three").Object3D): void {
+    obj.traverse((child) => {
+      const geometry = (child as { geometry?: { dispose?: () => void } }).geometry;
+      geometry?.dispose?.();
+      const material = (child as { material?: unknown }).material;
+      if (Array.isArray(material)) {
+        for (const entry of material) {
+          this.disposeMaterial(entry as { map?: { dispose?: () => void }; dispose?: () => void });
+        }
+      } else if (material) {
+        this.disposeMaterial(material as { map?: { dispose?: () => void }; dispose?: () => void });
       }
     });
   }

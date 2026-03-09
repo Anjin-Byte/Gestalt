@@ -38,6 +38,13 @@ export type RebuildResult = {
   swappedMeshes: ChunkMeshTransfer[];
 };
 
+/** Result of a batched rebuild operation. */
+export type BatchRebuildResult = {
+  chunksRebuilt: number;
+  remaining: number;
+  swappedMeshes: ChunkMeshTransfer[];
+};
+
 export class ChunkManagerClient {
   private worker: Worker;
 
@@ -67,6 +74,14 @@ export class ChunkManagerClient {
   // rebuild promise
   private resolveRebuild: ((result: RebuildResult) => void) | null = null;
   private rejectRebuild: ((error: Error) => void) | null = null;
+
+  // batch rebuild promise
+  private resolveBatchRebuild: ((result: BatchRebuildResult) => void) | null = null;
+  private rejectBatchRebuild: ((error: Error) => void) | null = null;
+
+  // dirty count promise
+  private resolveDirtyCount: ((count: number) => void) | null = null;
+  private rejectDirtyCount: ((error: Error) => void) | null = null;
 
   /**
    * Create a client that shares an existing worker.
@@ -261,6 +276,34 @@ export class ChunkManagerClient {
     });
   }
 
+  /**
+   * Rebuild up to `maxChunks` dirty chunks and return their meshes.
+   *
+   * Returns the rebuilt meshes plus how many dirty chunks remain.
+   */
+  rebuildBatch(maxChunks: number): Promise<BatchRebuildResult> {
+    if (this.resolveBatchRebuild) {
+      this.rejectBatchRebuild?.(new Error("superseded"));
+      this.resolveBatchRebuild = null;
+      this.rejectBatchRebuild = null;
+    }
+
+    return new Promise<BatchRebuildResult>((resolve, reject) => {
+      this.resolveBatchRebuild = resolve;
+      this.rejectBatchRebuild = reject;
+      this.send({ type: "cm-rebuild-batch", maxChunks });
+    });
+  }
+
+  /** Get the number of chunks waiting for a rebuild. */
+  getDirtyCount(): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
+      this.resolveDirtyCount = resolve;
+      this.rejectDirtyCount = reject;
+      this.send({ type: "cm-dirty-count" });
+    });
+  }
+
   // =========================================================================
   // Budget & Management (fire-and-forget)
   // =========================================================================
@@ -374,6 +417,22 @@ export class ChunkManagerClient {
         });
         this.resolveRebuild = null;
         this.rejectRebuild = null;
+        break;
+
+      case "cm-rebuild-batch-done":
+        this.resolveBatchRebuild?.({
+          chunksRebuilt: msg.chunksRebuilt,
+          remaining: msg.remaining,
+          swappedMeshes: msg.swappedMeshes,
+        });
+        this.resolveBatchRebuild = null;
+        this.rejectBatchRebuild = null;
+        break;
+
+      case "cm-dirty-count-result":
+        this.resolveDirtyCount?.(msg.count);
+        this.resolveDirtyCount = null;
+        this.rejectDirtyCount = null;
         break;
 
       case "cm-error":

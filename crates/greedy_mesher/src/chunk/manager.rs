@@ -923,6 +923,40 @@ impl ChunkManager {
         count
     }
 
+    /// Rebuild up to `max_chunks` dirty chunks.
+    ///
+    /// Returns `(rebuilt_count, remaining_dirty)`.  After this call,
+    /// `last_swapped_coords()` contains the coords that were rebuilt.
+    pub fn rebuild_batch(&mut self, max_chunks: usize) -> (usize, usize) {
+        let mut count = 0;
+        let voxel_size = self.config.voxel_size;
+
+        let dirty = self.dirty_tracker.take_n(max_chunks);
+
+        for coord in dirty {
+            self.sync_chunk_padding(coord);
+
+            if let Some(chunk) = self.chunks.get_mut(&coord) {
+                let mesh = build_mesh_for_chunk(chunk, voxel_size);
+                chunk.pending_mesh = Some(mesh);
+                chunk.state = ChunkState::ReadyToSwap {
+                    data_version: chunk.data_version,
+                };
+                count += 1;
+            }
+        }
+
+        self.swap_pending_meshes();
+
+        let remaining = self.dirty_tracker.dirty_count() + self.rebuild_queue.len();
+        (count, remaining)
+    }
+
+    /// Number of chunks waiting for a rebuild.
+    pub fn dirty_count(&self) -> usize {
+        self.dirty_tracker.dirty_count() + self.rebuild_queue.len()
+    }
+
     /// Clear all chunks and reset state.
     pub fn clear(&mut self) {
         self.chunks.clear();

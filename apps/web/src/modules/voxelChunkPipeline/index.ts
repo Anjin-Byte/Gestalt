@@ -146,15 +146,21 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
         updateStatus?.(statusText);
         logger!("[voxel-chunk-pipeline] init complete");
       } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
         statusText = "Missing (run pnpm build:wasm)";
         updateStatus?.(statusText);
-        ctx.logger.warn(`[voxel-chunk-pipeline] init failed: ${(error as Error).message}`);
+        ctx.logger.warn(`[voxel-chunk-pipeline] init failed: ${msg}`);
         releaseResources();
       }
     },
 
     activate: async () => {
-      await Promise.all([ensureVoxelizer(), ensureMesher()]);
+      try {
+        await Promise.all([ensureVoxelizer(), ensureMesher()]);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger?.(`[voxel-chunk-pipeline] activate failed: ${msg}`);
+      }
     },
 
     ui: (api) => {
@@ -356,6 +362,10 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
           debugChunkBounds,
           debugWireframe,
           colorMode,
+          batchSize: 128,
+          appendOutputs: ctxRef?.appendOutputs,
+          clearChunkOutputs: ctxRef?.clearChunkOutputs,
+          signal: job.signal,
         });
 
         const elapsed = (performance.now() - t0).toFixed(0);

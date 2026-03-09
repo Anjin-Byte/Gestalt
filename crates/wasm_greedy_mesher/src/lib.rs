@@ -672,6 +672,20 @@ impl WasmChunkManager {
         self.inner.rebuild_all_dirty([0.0, 0.0, 0.0])
     }
 
+    /// Rebuild up to `max_chunks` dirty chunks.
+    ///
+    /// Returns a flat `[rebuilt_count, remaining_dirty]` array.
+    /// After this call, `last_swapped_coords()` contains the rebuilt coords.
+    pub fn rebuild_batch(&mut self, max_chunks: usize) -> Vec<usize> {
+        let (rebuilt, remaining) = self.inner.rebuild_batch(max_chunks);
+        vec![rebuilt, remaining]
+    }
+
+    /// Number of chunks waiting for a rebuild.
+    pub fn dirty_count(&self) -> usize {
+        self.inner.dirty_count()
+    }
+
     // =====================================================================
     // Debug
     // =====================================================================

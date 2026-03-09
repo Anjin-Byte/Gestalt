@@ -130,7 +130,9 @@ export type ChunkManagerRequest =
       /** Flat Int32Array: [vx, vy, vz, material, ...] — 4 values per voxel. */
       voxels: Int32Array;
     }
-  | { type: "cm-rebuild-all-dirty" };
+  | { type: "cm-rebuild-all-dirty" }
+  | { type: "cm-rebuild-batch"; maxChunks: number }
+  | { type: "cm-dirty-count" };
 
 // =========================================================================
 // Worker Messages: Worker -> Main Thread
@@ -160,4 +162,11 @@ export type ChunkManagerResponse =
       chunksRebuilt: number;
       swappedMeshes: ChunkMeshTransfer[];
     }
+  | {
+      type: "cm-rebuild-batch-done";
+      chunksRebuilt: number;
+      remaining: number;
+      swappedMeshes: ChunkMeshTransfer[];
+    }
+  | { type: "cm-dirty-count-result"; count: number }
   | { type: "cm-error"; error: string };

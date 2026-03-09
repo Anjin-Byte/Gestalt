@@ -58,6 +58,8 @@ export type ModuleContext = {
   logger: Logger;
   baseUrl: string;
   emitOutputs?: (outputs: ModuleOutput[]) => void;
+  appendOutputs?: (outputs: ModuleOutput[]) => void;
+  clearChunkOutputs?: () => void;
 };
 
 export type UiApi = {

@@ -13,6 +13,9 @@ import { initDebugOverlay } from "./ui/debugOverlay";
 import { buildDebugPanel } from "./ui/debugPanel";
 import { buildScenePanel } from "./ui/scenePanel";
 import { AnimationLoop } from "./ui/animationLoop";
+import { patchWebGpuLimits } from "./gpu/patchLimits";
+
+patchWebGpuLimits();
 
 const app = async () => {
   // === DOM Elements ===
@@ -165,7 +168,17 @@ const app = async () => {
   });
 
   // === Module System ===
-  const ctx = { requestGpuDevice, logger, baseUrl: import.meta.env.BASE_URL };
+  const ctx = {
+    requestGpuDevice,
+    logger,
+    baseUrl: import.meta.env.BASE_URL,
+    appendOutputs: (outputs: import("./modules/types").ModuleOutput[]) => {
+      viewer.appendOutputs(outputs);
+    },
+    clearChunkOutputs: () => {
+      viewer.clearChunkOutputs();
+    },
+  };
 
   const moduleSection = document.createElement("section");
   moduleSection.className = "settings-overlay__section";

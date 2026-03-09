@@ -889,6 +889,80 @@ const handleChunkManagerMessage = (msg: ChunkManagerRequest): void => {
       }
       break;
     }
+    case "cm-rebuild-batch": {
+      if (!chunkManager) {
+        cmReply({ type: "cm-error", error: "ChunkManager not initialized" });
+        break;
+      }
+      try {
+        const result: number[] = chunkManager.rebuild_batch(msg.maxChunks);
+        const chunksRebuilt = result[0] ?? 0;
+        const remaining = result[1] ?? 0;
+
+        const swappedCoordsFlat: Int32Array = chunkManager.last_swapped_coords();
+        const swappedMeshes: ChunkMeshTransfer[] = [];
+        const transferBuffers: ArrayBuffer[] = [];
+
+        for (let i = 0; i < swappedCoordsFlat.length; i += 3) {
+          const cx = swappedCoordsFlat[i];
+          const cy = swappedCoordsFlat[i + 1];
+          const cz = swappedCoordsFlat[i + 2];
+
+          const meshResult = chunkManager.get_chunk_mesh(cx, cy, cz);
+          if (meshResult == null) continue;
+
+          const positions = new Float32Array(meshResult.positions);
+          const normals = new Float32Array(meshResult.normals);
+          const indices = new Uint32Array(meshResult.indices);
+          const uvs = new Float32Array(meshResult.uvs);
+          const materialIds = new Uint16Array(meshResult.material_ids);
+          const dataVersion = chunkManager.get_chunk_version(cx, cy, cz);
+
+          meshResult.free();
+
+          swappedMeshes.push({
+            coord: { x: cx, y: cy, z: cz },
+            dataVersion,
+            positions,
+            normals,
+            indices,
+            uvs,
+            materialIds,
+            vertexCount: positions.length / 3,
+            triangleCount: indices.length / 3,
+          });
+
+          transferBuffers.push(
+            positions.buffer,
+            normals.buffer,
+            indices.buffer,
+            uvs.buffer,
+            materialIds.buffer,
+          );
+        }
+
+        cmReply(
+          {
+            type: "cm-rebuild-batch-done",
+            chunksRebuilt,
+            remaining,
+            swappedMeshes,
+          },
+          transferBuffers,
+        );
+      } catch (err) {
+        cmReply({ type: "cm-error", error: `rebuild_batch failed: ${err}` });
+      }
+      break;
+    }
+    case "cm-dirty-count": {
+      if (!chunkManager) {
+        cmReply({ type: "cm-error", error: "ChunkManager not initialized" });
+        break;
+      }
+      cmReply({ type: "cm-dirty-count-result", count: chunkManager.dirty_count() });
+      break;
+    }
   }
 };
 

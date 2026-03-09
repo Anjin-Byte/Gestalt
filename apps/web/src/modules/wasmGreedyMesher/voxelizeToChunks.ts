@@ -34,6 +34,14 @@ export type VoxelizeToChunksOpts = {
   colorMode?: "none" | "material" | "chunk" | "face-direction" | "quad-size";
   /** Show quad boundary wireframe overlay. */
   debugWireframe?: boolean;
+  /** Chunks to mesh per batch in progressive mode (default: 8). */
+  batchSize?: number;
+  /** Append outputs incrementally to the viewer scene. */
+  appendOutputs?: (outputs: ModuleOutput[]) => void;
+  /** Clear previous chunk objects before streaming new ones. */
+  clearChunkOutputs?: () => void;
+  /** Abort signal to cancel progressive rebuild loop. */
+  signal?: AbortSignal;
 };
 
 /**
@@ -270,70 +278,94 @@ export const voxelizeToChunks = async (
   // Step 2: Ingest into ChunkManager
   await chunkManagerClient.ingestCompactVoxels(compactResult.voxels);
 
-  // Step 3: Rebuild all dirty chunks and get meshes
-  // Uses rebuildAllDirty instead of update() because std::time::Instant
-  // is not available on wasm32-unknown-unknown.
-  const rebuildResult = await chunkManagerClient.rebuildAllDirty();
-
-  // Step 4: Convert to ModuleOutput
-  const outputs: ModuleOutput[] = [];
+  // Step 3 + 4: Rebuild dirty chunks in batches and convert to ModuleOutput.
+  // When appendOutputs is provided, meshes stream to the viewer as each batch
+  // completes. Otherwise, all outputs are accumulated and returned at the end.
   const colorMode = opts.colorMode ?? "none";
+  const batchSize = opts.batchSize ?? 8;
+  const progressive = !!opts.appendOutputs;
 
-  for (const mesh of rebuildResult.swappedMeshes) {
-    const meshDesc: { positions: Float32Array; indices: Uint32Array; normals: Float32Array; colors?: Float32Array } = {
-      positions: mesh.positions,
-      indices: mesh.indices,
-      normals: mesh.normals,
-    };
-
-    if (colorMode !== "none") {
-      meshDesc.colors = generateColors(mesh, colorMode);
-    }
-
-    outputs.push({
-      kind: "mesh",
-      mesh: meshDesc,
-      label: `Chunk (${mesh.coord.x},${mesh.coord.y},${mesh.coord.z})`,
-    });
+  // Clear previous chunk scene objects before streaming new ones
+  if (progressive) {
+    opts.clearChunkOutputs?.();
   }
 
-  // Optional: quad boundary wireframe
-  if (opts.debugWireframe) {
-    for (const mesh of rebuildResult.swappedMeshes) {
-      const wirePositions = generateWireframe(mesh);
-      if (wirePositions.length > 0) {
-        outputs.push({
+  /** Convert a batch of chunk meshes into ModuleOutput[]. */
+  const meshesToOutputs = (meshes: ChunkMeshTransfer[]): ModuleOutput[] => {
+    const batch: ModuleOutput[] = [];
+    for (const mesh of meshes) {
+      const meshDesc: { positions: Float32Array; indices: Uint32Array; normals: Float32Array; colors?: Float32Array } = {
+        positions: mesh.positions,
+        indices: mesh.indices,
+        normals: mesh.normals,
+      };
+      if (colorMode !== "none") {
+        meshDesc.colors = generateColors(mesh, colorMode);
+      }
+      batch.push({
+        kind: "mesh",
+        mesh: meshDesc,
+        label: `Chunk (${mesh.coord.x},${mesh.coord.y},${mesh.coord.z})`,
+      });
+
+      if (opts.debugWireframe) {
+        const wirePositions = generateWireframe(mesh);
+        if (wirePositions.length > 0) {
+          batch.push({
+            kind: "lines",
+            lines: { positions: wirePositions, color: [1.0, 1.0, 0.0] },
+            label: `Wireframe (${mesh.coord.x},${mesh.coord.y},${mesh.coord.z})`,
+          });
+        }
+      }
+
+      if (opts.debugChunkBounds) {
+        const offsetX = mesh.coord.x * CS * opts.voxelSize;
+        const offsetY = mesh.coord.y * CS * opts.voxelSize;
+        const offsetZ = mesh.coord.z * CS * opts.voxelSize;
+        const chunkExtent = CS * opts.voxelSize;
+        const boundsPositions = generateBoxWireframe(
+          offsetX, offsetY, offsetZ,
+          offsetX + chunkExtent, offsetY + chunkExtent, offsetZ + chunkExtent,
+        );
+        batch.push({
           kind: "lines",
-          lines: { positions: wirePositions, color: [1.0, 1.0, 0.0] },
-          label: `Wireframe (${mesh.coord.x},${mesh.coord.y},${mesh.coord.z})`,
+          lines: { positions: boundsPositions, color: [0.0, 1.0, 1.0] },
+          label: `Bounds (${mesh.coord.x},${mesh.coord.y},${mesh.coord.z})`,
         });
       }
     }
-  }
+    return batch;
+  };
 
-  // Optional: debug chunk bounds
-  if (opts.debugChunkBounds) {
-    for (const mesh of rebuildResult.swappedMeshes) {
-      const offsetX = mesh.coord.x * CS * opts.voxelSize;
-      const offsetY = mesh.coord.y * CS * opts.voxelSize;
-      const offsetZ = mesh.coord.z * CS * opts.voxelSize;
-      const chunkExtent = CS * opts.voxelSize;
+  const allOutputs: ModuleOutput[] = [];
 
-      const boundsPositions = generateBoxWireframe(
-        offsetX,
-        offsetY,
-        offsetZ,
-        offsetX + chunkExtent,
-        offsetY + chunkExtent,
-        offsetZ + chunkExtent,
-      );
-      outputs.push({
-        kind: "lines",
-        lines: { positions: boundsPositions, color: [0.0, 1.0, 1.0] },
-        label: `Bounds (${mesh.coord.x},${mesh.coord.y},${mesh.coord.z})`,
-      });
+  if (progressive) {
+    // Batched progressive rebuild: stream chunks to the viewer as they complete
+    let remaining = 1; // enter the loop
+    while (remaining > 0) {
+      if (opts.signal?.aborted) break;
+
+      const result = await chunkManagerClient.rebuildBatch(batchSize);
+      remaining = result.remaining;
+
+      if (result.swappedMeshes.length > 0) {
+        const batch = meshesToOutputs(result.swappedMeshes);
+        opts.appendOutputs!(batch);
+        allOutputs.push(...batch);
+      }
+
+      // Yield to the browser so the scene renders between batches
+      if (remaining > 0) {
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      }
     }
+  } else {
+    // Non-progressive: rebuild everything at once
+    const rebuildResult = await chunkManagerClient.rebuildAllDirty();
+    const batch = meshesToOutputs(rebuildResult.swappedMeshes);
+    allOutputs.push(...batch);
   }
 
-  return outputs;
+  return allOutputs;
 };

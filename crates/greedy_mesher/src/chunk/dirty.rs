@@ -65,6 +65,18 @@ impl DirtyTracker {
         std::mem::take(&mut self.dirty_chunks)
     }
 
+    /// Take up to `n` dirty chunks from the set.
+    ///
+    /// Returns a Vec of at most `n` coords, removing them from the dirty set.
+    pub fn take_n(&mut self, n: usize) -> Vec<ChunkCoord> {
+        let take = n.min(self.dirty_chunks.len());
+        let taken: Vec<ChunkCoord> = self.dirty_chunks.iter().copied().take(take).collect();
+        for coord in &taken {
+            self.dirty_chunks.remove(coord);
+        }
+        taken
+    }
+
     /// Drain dirty chunks as an iterator.
     ///
     /// More efficient than take_dirty when iterating immediately.
