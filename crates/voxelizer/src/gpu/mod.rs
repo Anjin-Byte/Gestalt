@@ -10,6 +10,7 @@ use crate::core::VoxelizeOpts;
 mod buffers;
 mod compact_attrs;
 mod compact_positions;
+mod compact_voxels;
 mod dense;
 mod pipelines;
 mod shaders;
@@ -80,6 +81,16 @@ pub(crate) struct CompactAttrsParams {
     pub grid_dims: [u32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub(crate) struct CompactVoxelsParams {
+    pub brick_dim: u32,
+    pub brick_count: u32,
+    pub max_entries: u32,
+    pub material_table_len: u32,
+    pub g_origin: [i32; 4],
+}
+
 /// GPU-accelerated voxelizer using wgpu compute shaders.
 ///
 /// Supports both dense voxelization (full grid) and sparse voxelization
@@ -95,6 +106,8 @@ pub struct GpuVoxelizer {
     pub(crate) compact_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) compact_attrs_pipeline: wgpu::ComputePipeline,
     pub(crate) compact_attrs_bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) compact_voxels_pipeline: wgpu::ComputePipeline,
+    pub(crate) compact_voxels_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) workgroup_size: u32,
     pub(crate) tiles_per_workgroup: u32,
     pub(crate) max_invocations: u32,
@@ -153,6 +166,8 @@ impl GpuVoxelizer {
             compact_bind_group_layout: pipelines.compact_bind_group_layout,
             compact_attrs_pipeline: pipelines.compact_attrs_pipeline,
             compact_attrs_bind_group_layout: pipelines.compact_attrs_bind_group_layout,
+            compact_voxels_pipeline: pipelines.compact_voxels_pipeline,
+            compact_voxels_bind_group_layout: pipelines.compact_voxels_bind_group_layout,
             workgroup_size,
             tiles_per_workgroup,
             max_invocations,

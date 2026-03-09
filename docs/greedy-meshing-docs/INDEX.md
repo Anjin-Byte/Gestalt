@@ -68,15 +68,18 @@ Quick navigation for the voxel-to-mesh rendering architecture.
 | [ADR-0007](adr/0007-material-strategy.md) | Material strategy (textures, per-voxel) | Proposed |
 | [ADR-0008](adr/0008-design-gap-mitigations.md) | Design gap mitigations (12 issues) | Proposed |
 | [ADR-0009](../voxelizer-integration/adr/0009-architecture-b.md) | GPU-compact Architecture B for voxelizer→chunk integration | Accepted |
+| [ADR-0010](adr/0010-radiance-cascades.md) | Radiance cascades for global illumination | Proposed |
+| [ADR-0011](../gpu-driven-rendering/adr/0011-hybrid-gpu-driven.md) | Hybrid GPU-driven rendering pipeline (amends ADR-0001) | Proposed |
 
 ---
 
 ## Reading Order
 
 ### New to the project?
-1. [voxel-mesh-architecture.md](voxel-mesh-architecture.md) - Understand the big picture
-2. [implementation-plan.md](implementation-plan.md) - See what's being built and when
-3. [development-guidelines.md](development-guidelines.md) - Coding standards before contributing
+1. [`../architecture-map.md`](../architecture-map.md) - **Master map** of all data structures, algorithms, and relationships
+2. [voxel-mesh-architecture.md](voxel-mesh-architecture.md) - Understand the big picture
+3. [implementation-plan.md](implementation-plan.md) - See what's being built and when
+4. [development-guidelines.md](development-guidelines.md) - Coding standards before contributing
 
 ### Implementing the mesher?
 1. [greedy-mesh-implementation-plan.md](greedy-mesh-implementation-plan.md) - Full Rust implementation
@@ -88,8 +91,10 @@ Quick navigation for the voxel-to-mesh rendering architecture.
 2. [architecture-addendum.md](architecture-addendum.md) - Cross-chunk boundary handling
 
 ### Working on rendering?
-1. [threejs-buffer-management.md](threejs-buffer-management.md) - Buffer lifecycle
+1. [threejs-buffer-management.md](threejs-buffer-management.md) - Buffer lifecycle (Three.js path)
 2. [architecture-addendum.md](architecture-addendum.md) - Output format and Three.js integration
+3. [`../gpu-driven-rendering/INDEX.md`](../gpu-driven-rendering/INDEX.md) - **GPU-driven pipeline**: custom WebGPU rendering for chunks (ADR-0011)
+4. [ADR-0010](adr/0010-radiance-cascades.md) - Radiance cascades for global illumination
 
 ### Writing tests or debugging?
 1. [implementation-plan.md](implementation-plan.md#testing-strategy) - Test frameworks, per-phase tests, CI workflow
@@ -270,4 +275,6 @@ See [greedy-mesher-crate-structure.md](greedy-mesher-crate-structure.md) for det
 | 2026-01-29 | Created ADR-0003 (binary greedy meshing) and ADR-0004 (64³ chunks) |
 | 2026-01-28 | Adopted binary greedy meshing (10-50x speedup) |
 | 2026-01-28 | Changed chunk size from 32³ to 64³ |
+| 2026-03-09 | Created ADR-0010 (radiance cascades) and ADR-0011 (hybrid GPU-driven pipeline) |
+| 2026-03-09 | Created `docs/gpu-driven-rendering/` section with philosophy, design, and spec documents |
 | 2026-01-28 | Created comprehensive documentation set |

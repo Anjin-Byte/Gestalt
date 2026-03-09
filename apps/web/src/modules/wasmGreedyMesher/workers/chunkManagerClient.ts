@@ -32,6 +32,12 @@ export type PopulateDenseResult = {
   meshTime: number;
 };
 
+/** Result of rebuild_all_dirty operation. */
+export type RebuildResult = {
+  chunksRebuilt: number;
+  swappedMeshes: ChunkMeshTransfer[];
+};
+
 export class ChunkManagerClient {
   private worker: Worker;
 
@@ -57,6 +63,10 @@ export class ChunkManagerClient {
   // populate promise
   private resolvePopulate: ((result: PopulateDenseResult) => void) | null = null;
   private rejectPopulate: ((error: Error) => void) | null = null;
+
+  // rebuild promise
+  private resolveRebuild: ((result: RebuildResult) => void) | null = null;
+  private rejectRebuild: ((error: Error) => void) | null = null;
 
   /**
    * Create a client that shares an existing worker.
@@ -97,6 +107,12 @@ export class ChunkManagerClient {
     this.rejectPopulate?.(new Error("disposed"));
     this.resolvePopulate = null;
     this.rejectPopulate = null;
+    this.rejectIngest?.(new Error("disposed"));
+    this.resolveIngest = null;
+    this.rejectIngest = null;
+    this.rejectRebuild?.(new Error("disposed"));
+    this.resolveRebuild = null;
+    this.rejectRebuild = null;
     this.resolveDebug = null;
     this.rejectDebug = null;
     for (const req of this.voxelRequests.values()) {
@@ -200,6 +216,52 @@ export class ChunkManagerClient {
   }
 
   // =========================================================================
+  // Compact Voxel Ingestion
+  // =========================================================================
+
+  /** Pending ingest promise */
+  private resolveIngest: ((voxelCount: number) => void) | null = null;
+  private rejectIngest: ((error: Error) => void) | null = null;
+
+  /**
+   * Ingest compacted voxels into the chunk manager.
+   *
+   * Takes a flat Int32Array: [vx, vy, vz, material, ...] — 4 values per voxel.
+   * Returns the number of voxels written.
+   */
+  ingestCompactVoxels(voxels: Int32Array): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
+      this.resolveIngest = resolve;
+      this.rejectIngest = reject;
+      this.send({ type: "cm-ingest-compact-voxels", voxels });
+    });
+  }
+
+  // =========================================================================
+  // Rebuild All Dirty
+  // =========================================================================
+
+  /**
+   * Force-rebuild all dirty chunks and return their meshes.
+   *
+   * Unlike `update()`, this bypasses the frame budget and doesn't use
+   * `std::time::Instant` (which is unavailable on wasm32-unknown-unknown).
+   */
+  rebuildAllDirty(): Promise<RebuildResult> {
+    if (this.resolveRebuild) {
+      this.rejectRebuild?.(new Error("superseded"));
+      this.resolveRebuild = null;
+      this.rejectRebuild = null;
+    }
+
+    return new Promise<RebuildResult>((resolve, reject) => {
+      this.resolveRebuild = resolve;
+      this.rejectRebuild = reject;
+      this.send({ type: "cm-rebuild-all-dirty" });
+    });
+  }
+
+  // =========================================================================
   // Budget & Management (fire-and-forget)
   // =========================================================================
 
@@ -299,9 +361,32 @@ export class ChunkManagerClient {
         this.rejectPopulate = null;
         break;
 
+      case "cm-ingest-done":
+        this.resolveIngest?.(msg.voxelCount);
+        this.resolveIngest = null;
+        this.rejectIngest = null;
+        break;
+
+      case "cm-rebuild-all-dirty-done":
+        this.resolveRebuild?.({
+          chunksRebuilt: msg.chunksRebuilt,
+          swappedMeshes: msg.swappedMeshes,
+        });
+        this.resolveRebuild = null;
+        this.rejectRebuild = null;
+        break;
+
       case "cm-error":
         // Route generic errors to any pending promise
-        if (this.rejectPopulate) {
+        if (this.rejectIngest) {
+          this.rejectIngest(new Error(msg.error));
+          this.resolveIngest = null;
+          this.rejectIngest = null;
+        } else if (this.rejectRebuild) {
+          this.rejectRebuild(new Error(msg.error));
+          this.resolveRebuild = null;
+          this.rejectRebuild = null;
+        } else if (this.rejectPopulate) {
           this.rejectPopulate(new Error(msg.error));
           this.resolvePopulate = null;
           this.rejectPopulate = null;

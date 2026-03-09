@@ -646,6 +646,24 @@ impl WasmChunkManager {
         );
     }
 
+    /// Ingest compacted voxels from GPU voxelizer output.
+    ///
+    /// Takes a flat i32 array: [vx, vy, vz, material, vx, vy, vz, material, ...].
+    /// Each voxel is 4 values: global voxel coordinates (i32) + material (u32 as i32).
+    ///
+    /// Material sentinel handling:
+    /// - `0xFFFFFFFF` (unresolved) → MATERIAL_DEFAULT (1)
+    /// - `0` (empty sentinel) → MATERIAL_DEFAULT (1)
+    ///
+    /// Returns the number of voxels written.
+    pub fn ingest_compact_voxels(&mut self, voxels: &[i32]) -> u32 {
+        let tuples: Vec<(i32, i32, i32, u32)> = voxels
+            .chunks_exact(4)
+            .map(|c| (c[0], c[1], c[2], c[3] as u32))
+            .collect();
+        self.inner.ingest_compact_voxels(&tuples)
+    }
+
     /// Force-rebuild all dirty chunks (ignores frame budget).
     ///
     /// Returns the number of chunks rebuilt. Calls swap_pending_meshes

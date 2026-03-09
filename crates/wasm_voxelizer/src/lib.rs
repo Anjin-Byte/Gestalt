@@ -698,7 +698,110 @@ impl WasmVoxelizer {
         })
     }
 
+    /// Voxelize triangles and return compact voxels for ChunkManager ingestion.
+    ///
+    /// Returns a Promise resolving to an object with:
+    /// - `voxels`: Int32Array of [vx, vy, vz, material, ...] (4 values per voxel)
+    /// - `count`: number of voxels
+    /// - `fallback_used`: whether CPU fallback was used
+    ///
+    /// `material_table` is packed u16 pairs: two MaterialIds per u32 word,
+    /// indexed by triangle index (from owner_id).
+    /// `g_origin_x/y/z` is the global voxel-space origin offset.
     #[wasm_bindgen]
+    pub fn voxelize_compact_voxels(
+        &self,
+        positions: Float32Array,
+        indices: Uint32Array,
+        material_table: Uint32Array,
+        origin: Float32Array,
+        voxel_size: f32,
+        dims: Uint32Array,
+        epsilon: f32,
+        g_origin_x: i32,
+        g_origin_y: i32,
+        g_origin_z: i32,
+    ) -> js_sys::Promise {
+        let positions = positions.to_vec();
+        let indices = indices.to_vec();
+        let material_table = material_table.to_vec();
+        let origin = origin.to_vec();
+        let dims = dims.to_vec();
+        let inner = self.inner.clone();
+        future_to_promise(async move {
+            log("[wasm_voxelizer] voxelize_compact_voxels");
+            if origin.len() < 3 || dims.len() < 3 {
+                return Err(JsValue::from_str("origin/dims must have length 3"));
+            }
+
+            let mut triangles = Vec::new();
+            for face in indices.chunks(3) {
+                if face.len() < 3 {
+                    continue;
+                }
+                let idx0 = face[0] as usize * 3;
+                let idx1 = face[1] as usize * 3;
+                let idx2 = face[2] as usize * 3;
+                if idx2 + 2 >= positions.len() {
+                    continue;
+                }
+                let v0 = glam::Vec3::new(positions[idx0], positions[idx0 + 1], positions[idx0 + 2]);
+                let v1 = glam::Vec3::new(positions[idx1], positions[idx1 + 1], positions[idx1 + 2]);
+                let v2 = glam::Vec3::new(positions[idx2], positions[idx2 + 1], positions[idx2 + 2]);
+                triangles.push([v0, v1, v2]);
+            }
+
+            let mesh = MeshInput {
+                triangles,
+                material_ids: None,
+            };
+            let grid = VoxelGridSpec {
+                origin_world: glam::Vec3::new(origin[0], origin[1], origin[2]),
+                voxel_size,
+                dims: [dims[0], dims[1], dims[2]],
+                world_to_grid: None,
+            };
+            let opts = VoxelizeOpts {
+                epsilon,
+                store_owner: true,
+                store_color: false,
+            };
+
+            let g_origin = [g_origin_x, g_origin_y, g_origin_z];
+
+            let compact = inner
+                .compact_surface_sparse(&mesh, &grid, &opts, &material_table, g_origin)
+                .await
+                .map_err(|e| JsValue::from_str(&e))?;
+
+            // Flatten CompactVoxel structs to [vx, vy, vz, material, ...] as i32
+            let mut flat: Vec<i32> = Vec::with_capacity(compact.len() * 4);
+            for v in &compact {
+                flat.push(v.vx);
+                flat.push(v.vy);
+                flat.push(v.vz);
+                flat.push(v.material as i32);
+            }
+
+            let object = Object::new();
+            let voxels_arr = js_sys::Int32Array::from(flat.as_slice());
+            Reflect::set(&object, &JsValue::from_str("voxels"), &voxels_arr).ok();
+            Reflect::set(
+                &object,
+                &JsValue::from_str("count"),
+                &JsValue::from(compact.len() as u32),
+            )
+            .ok();
+            Reflect::set(
+                &object,
+                &JsValue::from_str("fallback_used"),
+                &JsValue::from(false),
+            )
+            .ok();
+            Ok(JsValue::from(object))
+        })
+    }
+
     #[wasm_bindgen]
     pub fn voxelize_triangles_chunked(
         &self,

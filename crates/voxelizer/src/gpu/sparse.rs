@@ -3,7 +3,7 @@
 use bytemuck;
 use wgpu::util::DeviceExt;
 
-use crate::core::{DispatchStats, MeshInput, SparseVoxelizationOutput, VoxelGridSpec, VoxelizeOpts};
+use crate::core::{CompactVoxel, DispatchStats, MeshInput, SparseVoxelizationOutput, VoxelGridSpec, VoxelizeOpts};
 use crate::csr::{build_brick_csr, BrickTriangleCsr};
 
 use super::map_buffer_u32;
@@ -25,6 +25,61 @@ impl GpuVoxelizer {
         let brick_dim = self.brick_dim;
         let csr = build_brick_csr(mesh, grid, brick_dim, opts.epsilon);
         self.run_sparse(mesh, grid, opts, brick_dim, csr).await
+    }
+
+    /// Voxelizes a mesh and compacts the output into `CompactVoxel` tuples.
+    ///
+    /// This is the high-level orchestrator for the ADR-0009 pipeline:
+    /// 1. Runs sparse voxelization to get occupancy + owner_id
+    /// 2. Runs the compact voxels shader to resolve materials and compute global coords
+    ///
+    /// # Arguments
+    /// * `mesh` — input triangles
+    /// * `grid` — voxel grid specification
+    /// * `opts` — voxelization options (must have `store_owner = true`)
+    /// * `material_table` — packed u16 material IDs (two per u32), indexed by triangle
+    /// * `g_origin` — global voxel-space origin offset
+    pub async fn compact_surface_sparse(
+        &self,
+        mesh: &MeshInput,
+        grid: &VoxelGridSpec,
+        opts: &VoxelizeOpts,
+        material_table: &[u32],
+        g_origin: [i32; 3],
+    ) -> Result<Vec<CompactVoxel>, String> {
+        if !opts.store_owner {
+            return Err("compact_surface_sparse requires store_owner = true".into());
+        }
+
+        // Use chunked voxelization to stay within GPU dispatch limits,
+        // then compact each chunk independently and merge results.
+        let chunks = self.voxelize_surface_sparse_chunked(mesh, grid, opts, 0).await?;
+
+        let mut all_voxels: Vec<CompactVoxel> = Vec::new();
+
+        for sparse in &chunks {
+            let owner_id = sparse.owner_id.as_ref()
+                .ok_or("voxelize_surface_sparse did not produce owner_id")?;
+
+            let max_entries = sparse.occupancy.iter()
+                .map(|w| w.count_ones())
+                .sum::<u32>()
+                .max(1);
+
+            let voxels = self.compact_sparse_voxels(
+                &sparse.occupancy,
+                owner_id,
+                &sparse.brick_origins,
+                sparse.brick_dim,
+                max_entries,
+                material_table,
+                g_origin,
+            ).await?;
+
+            all_voxels.extend(voxels);
+        }
+
+        Ok(all_voxels)
     }
 
     /// Voxelizes in chunks to handle large meshes within GPU limits.

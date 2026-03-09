@@ -139,6 +139,28 @@ pub struct VoxelizationOutput {
   pub stats: DispatchStats,
 }
 
+/// A compacted voxel with global coordinates and resolved material.
+///
+/// Produced by the GPU compact pass (ADR-0009). Each entry represents one
+/// occupied voxel with its global voxel-space position and MaterialId.
+/// 16 bytes per voxel, AoS layout matching the GPU output buffer.
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct CompactVoxel {
+    /// Global voxel X coordinate (can be negative)
+    pub vx: i32,
+    /// Global voxel Y coordinate (can be negative)
+    pub vy: i32,
+    /// Global voxel Z coordinate (can be negative)
+    pub vz: i32,
+    /// Resolved MaterialId (u16 carried as u32). 0xFFFFFFFF = unresolved sentinel.
+    pub material: u32,
+}
+
+// SAFETY: CompactVoxel is #[repr(C)] with only i32/u32 fields — all bit patterns valid.
+unsafe impl bytemuck::Pod for CompactVoxel {}
+unsafe impl bytemuck::Zeroable for CompactVoxel {}
+
 #[derive(Debug, Clone)]
 pub struct SparseVoxelizationOutput {
     pub brick_dim: u32,

@@ -247,6 +247,74 @@ impl ChunkManager {
         }
     }
 
+    /// Ingest compacted voxels from a GPU voxelizer into the chunk system.
+    ///
+    /// Each voxel is `(vx, vy, vz, material)` in global voxel coordinates.
+    /// Groups voxels by chunk, writes them with deferred dirty marking
+    /// (all writes complete before any rebuilds are triggered).
+    ///
+    /// Material sentinel handling:
+    /// - `0xFFFFFFFF` (unresolved) → MATERIAL_DEFAULT (1)
+    /// - `0` (empty sentinel) → MATERIAL_DEFAULT (1)
+    ///
+    /// Returns the number of voxels written.
+    pub fn ingest_compact_voxels(&mut self, voxels: &[(i32, i32, i32, u32)]) -> u32 {
+        use crate::core::MATERIAL_DEFAULT;
+
+        // Step 1: Group by chunk coordinate
+        let mut by_chunk: HashMap<ChunkCoord, Vec<([u32; 3], MaterialId)>> = HashMap::new();
+
+        for &(vx, vy, vz, mat_raw) in voxels {
+            let mat: MaterialId = if mat_raw == 0xFFFF_FFFF || mat_raw == 0 {
+                MATERIAL_DEFAULT
+            } else {
+                mat_raw as MaterialId
+            };
+
+            let voxel_idx = [vx, vy, vz];
+            let chunk_coord = ChunkCoord::from_voxel(voxel_idx);
+            let local = ChunkCoord::voxel_to_local(voxel_idx);
+
+            by_chunk
+                .entry(chunk_coord)
+                .or_default()
+                .push((local, mat));
+        }
+
+        // Step 2: Write voxels per chunk (no dirty marking yet)
+        let mut touched: Vec<(ChunkCoord, BoundaryFlags)> = Vec::with_capacity(by_chunk.len());
+        let mut count: u32 = 0;
+
+        for (chunk_coord, chunk_voxels) in &by_chunk {
+            let chunk = self.chunks.entry(*chunk_coord).or_insert_with(|| {
+                Chunk::new(*chunk_coord)
+            });
+
+            let mut combined_boundary = BoundaryFlags::default();
+
+            for &(local, material) in chunk_voxels {
+                let boundary = chunk.is_on_boundary(local[0], local[1], local[2]);
+                combined_boundary.merge(boundary);
+                chunk.set_voxel_raw(local[0], local[1], local[2], material);
+                count += 1;
+            }
+
+            chunk.increment_version();
+            touched.push((*chunk_coord, combined_boundary));
+        }
+
+        // Step 3: Deferred dirty marking — after ALL writes are done
+        for (coord, boundary) in touched {
+            self.dirty_tracker.mark_dirty_with_neighbors(coord, boundary);
+            if let Some(chunk) = self.chunks.get_mut(&coord) {
+                chunk.state = ChunkState::Dirty;
+            }
+            self.lru_tracker.touch(coord);
+        }
+
+        count
+    }
+
     // ========================================================================
     // Rebuild Processing
     // ========================================================================
@@ -1467,5 +1535,120 @@ mod tests {
 
         assert_eq!(mesh0.triangle_count, 10, "Chunk 0 should have 10 triangles (5 merged quads)");
         assert_eq!(mesh1.triangle_count, 10, "Chunk 1 should have 10 triangles (5 merged quads)");
+    }
+
+    // ========================================================================
+    // ingest_compact_voxels tests
+    // ========================================================================
+
+    #[test]
+    fn ingest_single_chunk() {
+        let mut manager = ChunkManager::new();
+        let voxels = vec![
+            (5, 10, 15, 2u32),
+            (6, 10, 15, 3u32),
+        ];
+        let count = manager.ingest_compact_voxels(&voxels);
+        assert_eq!(count, 2);
+        assert_eq!(manager.chunk_count(), 1);
+
+        let chunk = manager.get_chunk(ChunkCoord::ZERO).unwrap();
+        assert_eq!(chunk.state, ChunkState::Dirty);
+        // Verify voxels were written with correct materials
+        assert_eq!(chunk.get_voxel(5, 10, 15), 2);
+        assert_eq!(chunk.get_voxel(6, 10, 15), 3);
+    }
+
+    #[test]
+    fn ingest_multi_chunk_spanning() {
+        let mut manager = ChunkManager::new();
+        // CS=62, so voxel 61 is in chunk 0, voxel 62 is in chunk 1
+        let voxels = vec![
+            (10, 10, 10, 5u32),  // chunk (0,0,0)
+            (70, 10, 10, 6u32),  // chunk (1,0,0) — 70/62 = 1
+            (10, 70, 10, 7u32),  // chunk (0,1,0)
+        ];
+        let count = manager.ingest_compact_voxels(&voxels);
+        assert_eq!(count, 3);
+        assert_eq!(manager.chunk_count(), 3);
+    }
+
+    #[test]
+    fn ingest_negative_coords() {
+        let mut manager = ChunkManager::new();
+        let voxels = vec![
+            (-1, -1, -1, 4u32),   // chunk (-1,-1,-1), local = (61,61,61)
+            (-63, 0, 0, 5u32),    // chunk (-2,0,0), local = (61,0,0)
+        ];
+        let count = manager.ingest_compact_voxels(&voxels);
+        assert_eq!(count, 2);
+
+        // Verify chunk coords
+        let coord_neg1 = ChunkCoord::from_voxel([-1, -1, -1]);
+        assert_eq!(coord_neg1, ChunkCoord::new(-1, -1, -1));
+        assert!(manager.get_chunk(coord_neg1).is_some());
+
+        let coord_neg2 = ChunkCoord::from_voxel([-63, 0, 0]);
+        assert_eq!(coord_neg2, ChunkCoord::new(-2, 0, 0));
+        assert!(manager.get_chunk(coord_neg2).is_some());
+    }
+
+    #[test]
+    fn ingest_sentinel_materials() {
+        let mut manager = ChunkManager::new();
+        let voxels = vec![
+            (1, 1, 1, 0xFFFF_FFFFu32),  // unresolved → MATERIAL_DEFAULT
+            (2, 1, 1, 0u32),             // empty sentinel → MATERIAL_DEFAULT
+            (3, 1, 1, 42u32),            // normal material
+        ];
+        let count = manager.ingest_compact_voxels(&voxels);
+        assert_eq!(count, 3);
+
+        let chunk = manager.get_chunk(ChunkCoord::ZERO).unwrap();
+        assert_eq!(chunk.get_voxel(1, 1, 1), MATERIAL_DEFAULT);
+        assert_eq!(chunk.get_voxel(2, 1, 1), MATERIAL_DEFAULT);
+        assert_eq!(chunk.get_voxel(3, 1, 1), 42);
+    }
+
+    #[test]
+    fn ingest_boundary_dirty_propagation() {
+        let mut manager = ChunkManager::new();
+        // Voxel at x=0 in chunk (0,0,0) is on the -X boundary,
+        // which should mark chunk (-1,0,0) dirty too
+        let voxels = vec![
+            (0, 10, 10, 2u32),
+        ];
+        manager.ingest_compact_voxels(&voxels);
+
+        // The chunk itself should be dirty
+        assert!(manager.dirty_tracker.dirty_count() > 0);
+        // Neighbor (-1,0,0) should also be marked dirty
+        let neg_coord = ChunkCoord::new(-1, 0, 0);
+        assert!(manager.dirty_tracker.is_dirty(neg_coord),
+            "Neighbor chunk should be marked dirty due to boundary voxel");
+    }
+
+    #[test]
+    fn ingest_empty_input() {
+        let mut manager = ChunkManager::new();
+        let count = manager.ingest_compact_voxels(&[]);
+        assert_eq!(count, 0);
+        assert_eq!(manager.chunk_count(), 0);
+    }
+
+    #[test]
+    fn ingest_version_incremented_once_per_chunk() {
+        let mut manager = ChunkManager::new();
+        // Multiple voxels in the same chunk
+        let voxels = vec![
+            (1, 1, 1, 2u32),
+            (2, 2, 2, 3u32),
+            (3, 3, 3, 4u32),
+        ];
+        manager.ingest_compact_voxels(&voxels);
+
+        let chunk = manager.get_chunk(ChunkCoord::ZERO).unwrap();
+        // Version should be 1 (incremented once), not 3
+        assert_eq!(chunk.data_version, 1);
     }
 }

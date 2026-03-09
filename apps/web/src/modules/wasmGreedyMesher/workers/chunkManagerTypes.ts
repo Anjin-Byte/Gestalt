@@ -124,7 +124,13 @@ export type ChunkManagerRequest =
       simplexScale?: number;
       simplexOctaves?: number;
       simplexThreshold?: number;
-    };
+    }
+  | {
+      type: "cm-ingest-compact-voxels";
+      /** Flat Int32Array: [vx, vy, vz, material, ...] — 4 values per voxel. */
+      voxels: Int32Array;
+    }
+  | { type: "cm-rebuild-all-dirty" };
 
 // =========================================================================
 // Worker Messages: Worker -> Main Thread
@@ -147,5 +153,11 @@ export type ChunkManagerResponse =
       swappedMeshes: ChunkMeshTransfer[];
       genTime: number;
       meshTime: number;
+    }
+  | { type: "cm-ingest-done"; voxelCount: number }
+  | {
+      type: "cm-rebuild-all-dirty-done";
+      chunksRebuilt: number;
+      swappedMeshes: ChunkMeshTransfer[];
     }
   | { type: "cm-error"; error: string };

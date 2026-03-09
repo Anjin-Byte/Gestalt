@@ -812,6 +812,83 @@ const handleChunkManagerMessage = (msg: ChunkManagerRequest): void => {
     case "cm-generate-and-populate":
       handleCmGenerateAndPopulate(msg);
       break;
+    case "cm-ingest-compact-voxels": {
+      if (!chunkManager) {
+        cmReply({ type: "cm-error", error: "ChunkManager not initialized" });
+        break;
+      }
+      try {
+        const voxels = new Int32Array(msg.voxels);
+        const count = chunkManager.ingest_compact_voxels(voxels);
+        cmReply({ type: "cm-ingest-done", voxelCount: count });
+      } catch (err) {
+        cmReply({ type: "cm-error", error: `ingest_compact_voxels failed: ${err}` });
+      }
+      break;
+    }
+    case "cm-rebuild-all-dirty": {
+      if (!chunkManager) {
+        cmReply({ type: "cm-error", error: "ChunkManager not initialized" });
+        break;
+      }
+      try {
+        chunkManager.rebuild_all_dirty();
+
+        const swappedCoordsFlat: Int32Array = chunkManager.last_swapped_coords();
+        const swappedMeshes: ChunkMeshTransfer[] = [];
+        const transferBuffers: ArrayBuffer[] = [];
+
+        for (let i = 0; i < swappedCoordsFlat.length; i += 3) {
+          const cx = swappedCoordsFlat[i];
+          const cy = swappedCoordsFlat[i + 1];
+          const cz = swappedCoordsFlat[i + 2];
+
+          const meshResult = chunkManager.get_chunk_mesh(cx, cy, cz);
+          if (meshResult == null) continue;
+
+          const positions = new Float32Array(meshResult.positions);
+          const normals = new Float32Array(meshResult.normals);
+          const indices = new Uint32Array(meshResult.indices);
+          const uvs = new Float32Array(meshResult.uvs);
+          const materialIds = new Uint16Array(meshResult.material_ids);
+          const dataVersion = chunkManager.get_chunk_version(cx, cy, cz);
+
+          meshResult.free();
+
+          swappedMeshes.push({
+            coord: { x: cx, y: cy, z: cz },
+            dataVersion,
+            positions,
+            normals,
+            indices,
+            uvs,
+            materialIds,
+            vertexCount: positions.length / 3,
+            triangleCount: indices.length / 3,
+          });
+
+          transferBuffers.push(
+            positions.buffer,
+            normals.buffer,
+            indices.buffer,
+            uvs.buffer,
+            materialIds.buffer,
+          );
+        }
+
+        cmReply(
+          {
+            type: "cm-rebuild-all-dirty-done",
+            chunksRebuilt: swappedMeshes.length,
+            swappedMeshes,
+          },
+          transferBuffers,
+        );
+      } catch (err) {
+        cmReply({ type: "cm-error", error: `rebuild_all_dirty failed: ${err}` });
+      }
+      break;
+    }
   }
 };
 

@@ -4,7 +4,7 @@ pub mod gpu;
 pub mod reference_cpu;
 
 pub use crate::core::{
-    DispatchStats, MeshInput, SparseVoxelizationOutput, TileSpec, VoxelGridSpec,
-    VoxelizationOutput, VoxelizeOpts,
+    CompactVoxel, DispatchStats, MeshInput, SparseVoxelizationOutput, TileSpec,
+    VoxelGridSpec, VoxelizationOutput, VoxelizeOpts,
 };
 pub use crate::gpu::{GpuVoxelizer, GpuVoxelizerConfig};

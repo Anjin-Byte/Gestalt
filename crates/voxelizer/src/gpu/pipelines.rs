@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::shaders::{COMPACT_ATTRS_WGSL, COMPACT_WGSL, VOXELIZER_WGSL};
+use super::shaders::{COMPACT_ATTRS_WGSL, COMPACT_VOXELS_WGSL, COMPACT_WGSL, VOXELIZER_WGSL};
 
 /// Collection of compute pipelines used by the voxelizer.
 pub struct GpuPipelines {
@@ -12,6 +12,8 @@ pub struct GpuPipelines {
     pub compact_bind_group_layout: wgpu::BindGroupLayout,
     pub compact_attrs_pipeline: wgpu::ComputePipeline,
     pub compact_attrs_bind_group_layout: wgpu::BindGroupLayout,
+    pub compact_voxels_pipeline: wgpu::ComputePipeline,
+    pub compact_voxels_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 /// Creates all compute pipelines for the voxelizer.
@@ -23,6 +25,7 @@ pub async fn create_pipelines(
     let voxelizer = create_voxelizer_pipeline(device, workgroup_size, tiles_per_workgroup);
     let compact = create_compact_pipeline(device).await?;
     let compact_attrs = create_compact_attrs_pipeline(device);
+    let compact_voxels = create_compact_voxels_pipeline(device);
 
     Ok(GpuPipelines {
         pipeline: voxelizer.0,
@@ -31,6 +34,8 @@ pub async fn create_pipelines(
         compact_bind_group_layout: compact.1,
         compact_attrs_pipeline: compact_attrs.0,
         compact_attrs_bind_group_layout: compact_attrs.1,
+        compact_voxels_pipeline: compact_voxels.0,
+        compact_voxels_bind_group_layout: compact_voxels.1,
     })
 }
 
@@ -183,6 +188,51 @@ fn create_compact_attrs_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGr
             storage_buffer_entry(6, false), // out_color
             storage_buffer_entry(7, false), // counter
             uniform_buffer_entry(8),        // params
+        ],
+    })
+}
+
+// === Compact Voxels Pipeline ===
+
+fn create_compact_voxels_pipeline(
+    device: &wgpu::Device,
+) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("voxelizer.compact_voxels.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(COMPACT_VOXELS_WGSL.into()),
+    });
+
+    let bind_group_layout = create_compact_voxels_bind_group_layout(device);
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("voxelizer.compact_voxels_pipeline_layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("voxelizer.compact_voxels_pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "main",
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
+    });
+
+    (pipeline, bind_group_layout)
+}
+
+fn create_compact_voxels_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("voxelizer.compact_voxels_bind_group_layout"),
+        entries: &[
+            storage_buffer_entry(0, true),  // occupancy
+            storage_buffer_entry(1, true),  // brick_origins
+            storage_buffer_entry(2, true),  // owner_id
+            storage_buffer_entry(3, true),  // material_table
+            storage_buffer_entry(4, false), // out_voxels
+            storage_buffer_entry(5, false), // counter
+            uniform_buffer_entry(6),        // params
         ],
     })
 }
