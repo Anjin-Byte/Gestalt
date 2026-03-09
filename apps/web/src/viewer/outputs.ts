@@ -16,7 +16,7 @@ import {
   SRGBColorSpace,
   Sprite,
   SpriteMaterial,
-  DoubleSide,
+  FrontSide,
   Texture,
   Vector3,
   DynamicDrawUsage
@@ -78,7 +78,7 @@ const buildMesh = (output: Extract<ModuleOutput, { kind: "mesh" }>) => {
     roughness: 0.35,
     metalness: 0.1,
     vertexColors: Boolean(output.mesh.colors),
-    side: DoubleSide
+    side: FrontSide
   });
   const mesh = new Mesh(geometry, material);
   mesh.name = output.label ?? "mesh";
