@@ -12,6 +12,7 @@ import { ChunkManagerClient } from "../wasmGreedyMesher/workers/chunkManagerClie
 import { parseObjFallback, buildMaterialTable } from "../wasmObjLoader/helpers";
 import { voxelizeToChunks } from "../wasmGreedyMesher/voxelizeToChunks";
 import { getDebugOverlay } from "../../ui/debugOverlay";
+import { defaultSampleModels, type SampleModel } from "../wasmVoxelizer/helpers";
 
 type WasmVoxelizerModule = {
   default?: () => Promise<unknown>;
@@ -43,6 +44,8 @@ const asNumber = (v: unknown, fallback: number) => {
 const asInt = (v: unknown, fallback: number) => Math.round(asNumber(v, fallback));
 const asBool = (v: unknown, fallback: boolean) =>
   typeof v === "boolean" ? v : fallback;
+const asString = (v: unknown, fallback: string) =>
+  typeof v === "string" ? v : fallback;
 
 /** Compute bounds of a Float32Array of xyz triples. */
 const computeBounds = (positions: Float32Array) => {
@@ -72,9 +75,30 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
   let statusText = "Not loaded";
   let fileName = "No file";
   let objText = "";
+  let hasUploadedFile = false;
   let updateStatus: ((value: string) => void) | null = null;
   let updateFileName: ((value: string) => void) | null = null;
   let logger: ((msg: string) => void) | null = null;
+
+  let sampleModels: SampleModel[] = defaultSampleModels;
+  let sampleId = sampleModels[0]?.id ?? "";
+  let sampleText = "";
+  const sampleCache = new Map<string, string>();
+  let ctxRef: ModuleContext | null = null;
+
+  const loadSampleModel = async (id: string): Promise<string> => {
+    const cached = sampleCache.get(id);
+    if (cached) return cached;
+    const entry = sampleModels.find((m) => m.id === id) ?? sampleModels[0];
+    if (!entry || !ctxRef) return "";
+    const base = new URL(ctxRef.baseUrl || "/", window.location.href);
+    const url = new URL(entry.file, base).toString();
+    const response = await fetch(url);
+    if (!response.ok) return "";
+    const text = await response.text();
+    sampleCache.set(entry.id, text);
+    return text;
+  };
 
   const releaseResources = () => {
     chunkManagerClient?.dispose();
@@ -108,9 +132,16 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
 
     init: async (ctx: ModuleContext) => {
       logger = ctx.logger.info;
+      ctxRef = ctx;
       logger("[voxel-chunk-pipeline] init start");
       try {
         await Promise.all([ensureVoxelizer(), ensureMesher()]);
+        // Pre-load the default sample model so the first run is instant
+        sampleText = await loadSampleModel(sampleId);
+        if (sampleText) {
+          fileName = sampleModels.find((m) => m.id === sampleId)?.label ?? sampleId;
+          updateFileName?.(fileName);
+        }
         statusText = "Loaded";
         updateStatus?.(statusText);
         logger!("[voxel-chunk-pipeline] init complete");
@@ -129,6 +160,12 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
     ui: (api) => {
       api.addText({ id: "status", label: "Status", initial: statusText });
       api.addText({ id: "obj-file", label: "OBJ File", initial: fileName });
+      api.addSelect({
+        id: "sample-model",
+        label: "Sample Model",
+        options: sampleModels.map((m) => m.label),
+        initial: sampleModels.find((m) => m.id === sampleId)?.label ?? sampleModels[0]?.label ?? "",
+      });
       api.addFile({
         id: "obj-input",
         label: "Pick OBJ",
@@ -137,11 +174,13 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
           if (!file) {
             fileName = "No file";
             objText = "";
+            hasUploadedFile = false;
             updateFileName?.(fileName);
             updateStatus?.("No file selected");
             return;
           }
           fileName = file.name;
+          hasUploadedFile = true;
           updateFileName?.(fileName);
           updateStatus?.("Loading...");
           try {
@@ -158,9 +197,9 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
         id: "grid-dim",
         label: "Grid Dim",
         min: 8,
-        max: 1024,
+        max: 4096,
         step: 8,
-        initial: 128,
+        initial: 1024,
       });
       api.addNumber({
         id: "voxel-size",
@@ -179,6 +218,13 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
         initial: 0.0001,
       });
       api.addCheckbox({ id: "fit-bounds", label: "Fit Grid To Mesh", initial: true });
+      api.addSelect({
+        id: "color-mode",
+        label: "Color Mode",
+        options: ["none", "material", "chunk", "face-direction", "quad-size"],
+        initial: "quad-size",
+      });
+      api.addCheckbox({ id: "debug-wireframe", label: "Quad Wireframe", initial: false });
       api.addCheckbox({ id: "debug-chunk-bounds", label: "Chunk Bounds", initial: false });
 
       updateStatus = (v: string) => api.setText("status", v);
@@ -191,20 +237,41 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
         return [];
       }
 
-      if (!objText) {
+      // Resolve model source: uploaded file takes priority over sample selector
+      const selectedLabel = String(job.params["sample-model"] ?? sampleModels[0]?.label ?? "");
+      const selectedModel = sampleModels.find((m) => m.label === selectedLabel) ?? sampleModels[0];
+      const selectedId = selectedModel?.id ?? sampleId;
+
+      if (!hasUploadedFile && selectedId !== sampleId) {
+        sampleId = selectedId;
+        sampleText = "";
+      }
+      if (!hasUploadedFile && !sampleText) {
+        updateStatus?.("Loading sample model...");
+        sampleText = await loadSampleModel(sampleId);
+        if (sampleText) {
+          fileName = selectedModel?.label ?? sampleId;
+          updateFileName?.(fileName);
+        }
+      }
+
+      const sourceText = hasUploadedFile ? objText : sampleText;
+      if (!sourceText) {
         updateStatus?.("No OBJ loaded");
         return [];
       }
 
-      const gridDim = clamp(asInt(job.params["grid-dim"], 128), 8, 1024);
+      const gridDim = clamp(asInt(job.params["grid-dim"], 128), 8, 2048);
       let voxelSize = clamp(asNumber(job.params["voxel-size"], 0.1), 0.001, 0.5);
       const epsilon = clamp(asNumber(job.params.epsilon, 0.0001), 0, 0.01);
       const fitBounds = asBool(job.params["fit-bounds"], true);
       const debugChunkBounds = asBool(job.params["debug-chunk-bounds"], false);
+      const debugWireframe = asBool(job.params["debug-wireframe"], false);
+      const colorMode = asString(job.params["color-mode"], "material") as "none" | "material" | "chunk" | "face-direction" | "quad-size";
 
       // Parse OBJ
       updateStatus?.("Parsing OBJ...");
-      const parsed = parseObjFallback(objText);
+      const parsed = parseObjFallback(sourceText);
       if (parsed.positions.length === 0 || parsed.indices.length === 0) {
         updateStatus?.("No faces found in OBJ");
         return [];
@@ -264,6 +331,8 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
           dims: [gridDim, gridDim, gridDim],
           epsilon,
           debugChunkBounds,
+          debugWireframe,
+          colorMode,
         });
 
         const elapsed = (performance.now() - t0).toFixed(0);

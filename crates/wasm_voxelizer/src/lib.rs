@@ -144,6 +144,7 @@ pub struct WasmVoxelizer {
 impl WasmVoxelizer {
     #[wasm_bindgen]
     pub fn new() -> js_sys::Promise {
+        console_error_panic_hook::set_once();
         future_to_promise(async {
             log("[wasm_voxelizer] init");
             let voxelizer = GpuVoxelizer::new(GpuVoxelizerConfig::default())
@@ -733,6 +734,12 @@ impl WasmVoxelizer {
             if origin.len() < 3 || dims.len() < 3 {
                 return Err(JsValue::from_str("origin/dims must have length 3"));
             }
+            log(&format!(
+                "[wasm_voxelizer] dims=[{},{},{}], voxel_size={}, triangles={}, g_origin=[{},{},{}]",
+                dims[0], dims[1], dims[2], voxel_size,
+                indices.len() / 3,
+                g_origin_x, g_origin_y, g_origin_z
+            ));
 
             let mut triangles = Vec::new();
             for face in indices.chunks(3) {

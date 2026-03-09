@@ -7,9 +7,9 @@ import { createWasmGreedyMesherModule } from "./wasmGreedyMesher";
 import { createVoxelChunkPipelineModule } from "./voxelChunkPipeline";
 
 export const createDefaultModules = (): TestbedModule[] => [
+  createVoxelChunkPipelineModule(),
   createWasmGreedyMesherModule(),
   createWasmVoxelizerModule(),
-  createVoxelChunkPipelineModule(),
   createHelloTriangleModule(),
   createWasmObjLoaderModule(),
   createWasmWebgpuDemoModule()

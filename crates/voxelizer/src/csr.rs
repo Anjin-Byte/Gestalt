@@ -278,6 +278,25 @@ pub fn build_brick_csr(
         }
     }
 
+    // Diagnostic: report CSR memory usage
+    let total_refs: usize = brick_map.values().map(|v| v.len()).sum();
+    let brick_count = brick_map.len();
+    // HashMap overhead: ~64 bytes per entry + Vec overhead per bucket
+    let estimated_bytes = brick_count * 80 + total_refs * 4;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let msg = format!(
+            "[build_brick_csr] bricks={}, tri_refs={}, est_memory={}MB, triangles={}, grid_dims={:?}, brick_dim={}",
+            brick_count, total_refs, estimated_bytes / (1024 * 1024),
+            mesh.triangles.len(), grid.dims, brick_dim
+        );
+        web_sys::console::log_1(&msg.into());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (brick_count, total_refs, estimated_bytes);
+    }
+
     let mut brick_origins: Vec<[u32; 3]> = brick_map
         .keys()
         .map(|(x, y, z)| [x * brick_dim, y * brick_dim, z * brick_dim])
