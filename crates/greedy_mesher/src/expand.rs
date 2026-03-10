@@ -116,7 +116,7 @@ fn emit_quad_basic(
         output.normals.extend_from_slice(normal);
     }
 
-    // Add indices (two triangles, CCW winding)
+    // Add indices (two triangles, CCW winding so geometric normal faces outward)
     output.indices.extend_from_slice(&[
         base_vertex,
         base_vertex + 1,
@@ -164,7 +164,7 @@ fn emit_quad_with_uvs(
         output.material_ids.push(material);
     }
 
-    // Add indices (two triangles, CCW winding)
+    // Add indices (two triangles, CCW winding so geometric normal faces outward)
     output.indices.extend_from_slice(&[
         base_vertex,
         base_vertex + 1,
@@ -185,15 +185,15 @@ fn compute_quad_corners(
     match face {
         FACE_POS_Y => [
             [bx, by + voxel_size, bz],
-            [bx + w, by + voxel_size, bz],
-            [bx + w, by + voxel_size, bz + h],
             [bx, by + voxel_size, bz + h],
+            [bx + w, by + voxel_size, bz + h],
+            [bx + w, by + voxel_size, bz],
         ],
         FACE_NEG_Y => [
             [bx, by, bz],
-            [bx, by, bz + h],
-            [bx + w, by, bz + h],
             [bx + w, by, bz],
+            [bx + w, by, bz + h],
+            [bx, by, bz + h],
         ],
         // X-faces: width extends along Y, height extends along Z
         FACE_POS_X => [
@@ -238,15 +238,15 @@ fn compute_quad_corners_with_uvs(
     let uvs = match face {
         FACE_POS_Y => [
             [0.0, 0.0],
-            [u_tiles, 0.0],
-            [u_tiles, v_tiles],
             [0.0, v_tiles],
+            [u_tiles, v_tiles],
+            [u_tiles, 0.0],
         ],
         FACE_NEG_Y => [
             [0.0, 0.0],
-            [0.0, v_tiles],
-            [u_tiles, v_tiles],
             [u_tiles, 0.0],
+            [u_tiles, v_tiles],
+            [0.0, v_tiles],
         ],
         FACE_POS_X => [
             [0.0, 0.0],
@@ -401,6 +401,58 @@ mod tests {
                 let nz = output.normals[i * 3 + 2];
                 assert_eq!([nx, ny, nz], expected_normal, "Face {} has wrong normal", face);
             }
+        }
+    }
+
+    /// Verify that the geometric normal from triangle winding matches the face normal.
+    /// This ensures backface culling works correctly with FrontSide rendering.
+    #[test]
+    fn winding_order_matches_face_normal() {
+        let test_cases = [
+            (FACE_POS_Y, [0.0f32, 1.0, 0.0]),
+            (FACE_NEG_Y, [0.0, -1.0, 0.0]),
+            (FACE_POS_X, [1.0, 0.0, 0.0]),
+            (FACE_NEG_X, [-1.0, 0.0, 0.0]),
+            (FACE_POS_Z, [0.0, 0.0, 1.0]),
+            (FACE_NEG_Z, [0.0, 0.0, -1.0]),
+        ];
+
+        for (face, expected) in test_cases {
+            let mut packed_quads: [Vec<u64>; 6] = Default::default();
+            // Use a 3x2 quad so w != h, catching axis swap bugs
+            packed_quads[face].push(pack_quad(0, 0, 0, 3, 2, 1));
+
+            let output = expand_quads(&packed_quads, 1.0, [0.0, 0.0, 0.0]);
+
+            // First triangle: indices 0, 1, 2
+            let i0 = output.indices[0] as usize;
+            let i1 = output.indices[1] as usize;
+            let i2 = output.indices[2] as usize;
+
+            let v0 = [output.positions[i0*3], output.positions[i0*3+1], output.positions[i0*3+2]];
+            let v1 = [output.positions[i1*3], output.positions[i1*3+1], output.positions[i1*3+2]];
+            let v2 = [output.positions[i2*3], output.positions[i2*3+1], output.positions[i2*3+2]];
+
+            // geometric normal = (v1 - v0) × (v2 - v0)
+            let a = [v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]];
+            let b = [v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2]];
+            let cross = [
+                a[1]*b[2] - a[2]*b[1],
+                a[2]*b[0] - a[0]*b[2],
+                a[0]*b[1] - a[1]*b[0],
+            ];
+
+            // Normalize
+            let len = (cross[0]*cross[0] + cross[1]*cross[1] + cross[2]*cross[2]).sqrt();
+            let n = [cross[0]/len, cross[1]/len, cross[2]/len];
+
+            assert!(
+                (n[0] - expected[0]).abs() < 1e-5
+                    && (n[1] - expected[1]).abs() < 1e-5
+                    && (n[2] - expected[2]).abs() < 1e-5,
+                "Face {}: geometric normal [{:.3}, {:.3}, {:.3}] != expected [{:.3}, {:.3}, {:.3}]",
+                face, n[0], n[1], n[2], expected[0], expected[1], expected[2],
+            );
         }
     }
 }

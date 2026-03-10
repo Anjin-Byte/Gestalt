@@ -285,11 +285,6 @@ export const voxelizeToChunks = async (
   const batchSize = opts.batchSize ?? 8;
   const progressive = !!opts.appendOutputs;
 
-  // Clear previous chunk scene objects before streaming new ones
-  if (progressive) {
-    opts.clearChunkOutputs?.();
-  }
-
   /** Convert a batch of chunk meshes into ModuleOutput[]. */
   const meshesToOutputs = (meshes: ChunkMeshTransfer[]): ModuleOutput[] => {
     const batch: ModuleOutput[] = [];

@@ -205,7 +205,7 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
         min: 8,
         max: 4096,
         step: 8,
-        initial: 1256,
+        initial: 512,
       });
       api.addNumber({
         id: "voxel-size",
@@ -267,13 +267,17 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
         return [];
       }
 
-      const gridDim = clamp(asInt(job.params["grid-dim"], 128), 8, 2048);
+      const gridDim = clamp(asInt(job.params["grid-dim"], 128), 8, 4096);
       let voxelSize = clamp(asNumber(job.params["voxel-size"], 0.1), 0.001, 0.5);
       const epsilon = clamp(asNumber(job.params.epsilon, 0.0001), 0, 0.01);
       const fitBounds = asBool(job.params["fit-bounds"], true);
       const debugChunkBounds = asBool(job.params["debug-chunk-bounds"], false);
       const debugWireframe = asBool(job.params["debug-wireframe"], false);
       const colorMode = asString(job.params["color-mode"], "material") as "none" | "material" | "chunk" | "face-direction" | "quad-size";
+
+      // Clear previous scene objects immediately so stale geometry doesn't
+      // linger while voxelization and meshing run.
+      ctxRef?.clearChunkOutputs?.();
 
       // Parse OBJ
       updateStatus?.("Parsing OBJ...");
