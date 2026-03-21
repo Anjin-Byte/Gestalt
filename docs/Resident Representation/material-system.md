@@ -1,10 +1,12 @@
 # Material System
 
-Global material table design, `MaterialEntry` layout, per-chunk palette protocol, and
-how material properties flow through ingest, traversal, and raster stages.
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
 
-Related: [[chunk-field-registry]] (authoritative palette fields), [[pipeline-stages]]
-(R-5, R-6, I-3 consumers), [[edit-protocol]] (material table invalidation).
+> Global material table design, `MaterialEntry` layout, per-chunk palette protocol, and how material properties flow through ingest, traversal, and raster stages.
+
+Related: [chunk-field-registry](chunk-field-registry.md) (authoritative palette fields), [pipeline-stages](pipeline-stages.md) (R-5, R-6, I-3 consumers), [edit-protocol](edit-protocol.md) (material table invalidation).
 
 ---
 
@@ -187,7 +189,7 @@ radiance += transparency * emissive;
 ```
 
 Material fetch only happens after `opaque_mask` confirms the hit. It is never part of the
-DDA inner loop. See [[traversal-acceleration]] — Invariant 1.
+DDA inner loop. See [traversal-acceleration](traversal-acceleration.md) — Invariant 1.
 
 ### How R-5 Reads Surface Appearance
 
@@ -320,7 +322,7 @@ palette_meta[slot]    1 u32    palette_size (u16) + bits_per_entry (u8) + reserv
 ```
 
 This field belongs in the Data Plane alongside `chunk_palette_buf` and `chunk_index_buf`.
-See [[gpu-chunk-pool]] — Per-slot layout.
+See [gpu-chunk-pool](gpu-chunk-pool.md) — Per-slot layout.
 
 ---
 
@@ -335,7 +337,7 @@ Any producer (voxelizer, procedural generator, OBJ importer) that writes chunk v
 4. Write `palette_meta[slot]` with the correct `palette_size` and `bits_per_entry`.
 5. Write `chunk_occupancy_atlas[slot]` as usual.
 6. Follow the standard edit-protocol signaling (`chunk_version`, `dirty_chunks`,
-   `stale_summary` — see [[edit-protocol]]).
+   `stale_summary` — see [edit-protocol](edit-protocol.md)).
 
 Producers must not embed material properties into `chunk_palette_buf`. The palette is an
 index structure. Property data belongs in `material_table`.
@@ -362,9 +364,9 @@ I-3 emissive scan → R-6 hit emissive → R-5 albedo.
 
 ## See Also
 
-- [[chunk-field-registry]] — `materials.palette`, `materials.index_buf`, `chunk_flags.has_emissive`
-- [[gpu-chunk-pool]] — per-slot layout; `chunk_palette_buf` and `chunk_index_buf` allocation
-- [[pipeline-stages]] — R-5 (albedo read), R-6 (emissive hit), I-3 (palette scan)
-- [[traversal-acceleration]] — material fetch is second-stage, never part of the DDA hot loop
-- [[edit-protocol]] — `stale_summary` triggering and the brute-force invalidation path
-- [[../greedy-meshing-docs/adr/0007-material-strategy]] — ADR-0007 `MaterialDef` (superseded by this spec)
+- [chunk-field-registry](chunk-field-registry.md) — `materials.palette`, `materials.index_buf`, `chunk_flags.has_emissive`
+- [gpu-chunk-pool](gpu-chunk-pool.md) — per-slot layout; `chunk_palette_buf` and `chunk_index_buf` allocation
+- [pipeline-stages](pipeline-stages.md) — R-5 (albedo read), R-6 (emissive hit), I-3 (palette scan)
+- [traversal-acceleration](traversal-acceleration.md) — material fetch is second-stage, never part of the DDA hot loop
+- [edit-protocol](edit-protocol.md) — `stale_summary` triggering and the brute-force invalidation path
+- [ADR-0007](../adr/0007-material-strategy.md) — ADR-0007 `MaterialDef` (superseded by this spec)

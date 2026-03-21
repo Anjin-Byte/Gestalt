@@ -1,14 +1,63 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const _require = createRequire(import.meta.url);
+
+// ---------------------------------------------------------------------------
+// Cross-Origin Isolation headers
+// Required for SharedArrayBuffer (renderer worker state readback ring buffer).
+// See: docs/architecture/wasm-boundary-protocol.md
+// ---------------------------------------------------------------------------
+const COOP_COEP_HEADERS = {
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Embedder-Policy": "require-corp",
+};
+
+// ---------------------------------------------------------------------------
+// coi-serviceworker plugin
+// Injects the coi-serviceworker.js file so that GitHub Pages (which cannot
+// serve custom HTTP headers) gets COOP/COEP injected via service worker.
+// The dev server sets the headers directly; this plugin handles production.
+// ---------------------------------------------------------------------------
+function coiServiceWorkerPlugin(): Plugin {
+  const coiSrc = (): string => {
+    const resolved = _require.resolve("coi-serviceworker/coi-serviceworker.js");
+    return fs.readFileSync(resolved, "utf8");
+  };
+
+  return {
+    name: "coi-serviceworker",
+    apply: "build",
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: "coi-serviceworker.js",
+        source: coiSrc(),
+      });
+    },
+  };
+}
 
 export default defineConfig({
   plugins: [
     svelte(),
     tailwindcss(),
+    coiServiceWorkerPlugin(),
   ],
+
+  server: {
+    headers: COOP_COEP_HEADERS,
+  },
+
+  preview: {
+    headers: COOP_COEP_HEADERS,
+  },
+
   resolve: {
     alias: [
       {
@@ -16,10 +65,10 @@ export default defineConfig({
         replacement: "three/src/Three.js",
       },
       {
-        find: "@gestalt/modules",
+        find: "@gestalt/phi",
         replacement: path.resolve(
           fileURLToPath(
-            new URL("../../packages/modules/src/index.ts", import.meta.url)
+            new URL("../../packages/phi/src/index.ts", import.meta.url)
           )
         ),
       },
@@ -31,11 +80,13 @@ export default defineConfig({
           )
         ),
       },
+      // Transitional alias: bridges to the Three.js backend in legacy/apps/web.
+      // Remove once the renderer worker (src/renderer/) owns the frame loop.
       {
         find: "@web",
         replacement: path.resolve(
           fileURLToPath(
-            new URL("../../apps/web/src", import.meta.url)
+            new URL("../../legacy/apps/web/src", import.meta.url)
           )
         ),
       },
@@ -47,19 +98,36 @@ export default defineConfig({
       },
     ],
   },
+
   esbuild: {
     target: "esnext",
   },
+
   optimizeDeps: {
     esbuildOptions: {
       target: "esnext",
     },
   },
+
   worker: {
     format: "es",
   },
+
   build: {
     outDir: "dist",
     target: "esnext",
+    rollupOptions: {
+      output: {
+        // Each WASM package gets its own chunk so the browser can load them
+        // lazily and cache them independently. Without this, wasm-pack glue
+        // code and WASM binary imports land in the main bundle.
+        manualChunks(id) {
+          if (id.includes("wasm_obj_loader"))    return "wasm-obj-loader";
+          if (id.includes("wasm_voxelizer"))     return "wasm-voxelizer";
+          if (id.includes("wasm_greedy_mesher")) return "wasm-greedy-mesher";
+          if (id.includes("wasm_webgpu_demo"))   return "wasm-webgpu-demo";
+        },
+      },
+    },
   },
 });

@@ -1,10 +1,15 @@
 # Depth Prepass and Raster Optimization Chain
 
-The raster optimization path for Product 2 (surface structure / camera image).
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
+> The raster optimization path for Product 2 (surface structure / camera image).
+
 These tools reduce the cost of drawing chunk geometry. They have no role in Product 1 (world-space ray work).
 
-See [[layer-model]] for why Product 2 and Product 1 optimizations must not be mixed.
-See [[pipeline-stages]] for where each stage sits in the frame.
+See [layer-model](layer-model.md) for why Product 2 and Product 1 optimizations must not be mixed.
+See [pipeline-stages](pipeline-stages.md) for where each stage sits in the frame.
 
 ---
 
@@ -48,7 +53,7 @@ This is the "feed the depth buffer first so it can become a bouncer" strategy. T
 - Radiance cascade probe placement reads world positions from this depth buffer (Stage R-6)
 - Three.js overlay composites correctly against this depth buffer (Stage R-9)
 
-The depth prepass is not just a raster optimization — it is the shared infrastructure prerequisite for the entire pipeline. It must be app-owned (not internal to Three.js) for downstream stages to read it. See [[pipeline-stages]] Stage R-2.
+The depth prepass is not just a raster optimization — it is the shared infrastructure prerequisite for the entire pipeline. It must be app-owned (not internal to Three.js) for downstream stages to read it. See [pipeline-stages](pipeline-stages.md) Stage R-2.
 
 **GPU resource:** `depth_texture: depth32float`, app-owned `GPUTexture`. Written by R-2, read by R-3, R-5 (depth test), R-6, R-9.
 
@@ -66,7 +71,7 @@ This is the tool that stops triangle setup from running on invisible chunks. Fro
 
 **Conservative bias:** GPU rasterization has sub-pixel precision issues and Hi-Z sampling can produce false positives. Always bias slightly: if the test is ambiguous, keep the chunk. False negatives (culling a visible chunk) are corruption; false positives (drawing a hidden chunk) are just wasted work.
 
-**GPU resources:** `hiz_pyramid: r32float` mipped 2D texture (Stage R-3). `indirect_draw_buf` written by cull compute (Stage R-4). See [[pipeline-stages]].
+**GPU resources:** `hiz_pyramid: r32float` mipped 2D texture (Stage R-3). `indirect_draw_buf` written by cull compute (Stage R-4). See [pipeline-stages](pipeline-stages.md).
 
 ---
 
@@ -84,7 +89,7 @@ Hi-Z tells you which chunks the *camera* cannot see this frame. That is a correc
 
 Using Hi-Z to gate Product 1 queries would produce incorrect lighting — specifically, light sources and emissive geometry that happen to be occluded from the camera would stop contributing to GI. This is a correctness bug, not a performance tradeoff.
 
-The correct prefilter for Product 1 traversal is `chunk_flags.is_empty` — a world-space property, not a camera-space one. See [[traversal-acceleration]].
+The correct prefilter for Product 1 traversal is `chunk_flags.is_empty` — a world-space property, not a camera-space one. See [traversal-acceleration](traversal-acceleration.md).
 
 ---
 
@@ -145,7 +150,7 @@ The depth texture must be recreated when the canvas is resized. All downstream c
 
 ## See Also
 
-- [[pipeline-stages]] — full stage diagram; R-2 (depth prepass), R-3 (Hi-Z build), R-4 (cull)
-- [[layer-model]] — Product 2 (surface) vs Product 1 (world-space) — why Hi-Z stays on the raster side
-- [[traversal-acceleration]] — correct prefilter for world-space ray work (`chunk_flags.is_empty`)
-- [[../gpu-driven-rendering/adr/0011-hybrid-gpu-driven]] — ADR-0011 hybrid pipeline (the broader migration context)
+- [pipeline-stages](pipeline-stages.md) — full stage diagram; R-2 (depth prepass), R-3 (Hi-Z build), R-4 (cull)
+- [layer-model](layer-model.md) — Product 2 (surface) vs Product 1 (world-space) — why Hi-Z stays on the raster side
+- [traversal-acceleration](traversal-acceleration.md) — correct prefilter for world-space ray work (`chunk_flags.is_empty`)
+- [ADR-0011](../adr/0011-hybrid-gpu-driven.md) — ADR-0011 hybrid pipeline (the broader migration context)

@@ -1,7 +1,8 @@
 # Formal Invariants and Correctness
 
-Date: February 22, 2026
-Status: Authoritative
+**Type:** spec
+**Status:** current
+**Date:** 2026-02-22
 
 Sources: `archive/voxelizer-greedy-integration-spec.md` §§9.5, 10.4;
 `archive/voxelizer-chunk-native-output-design-requirements.md` §Constraints

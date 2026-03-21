@@ -1,7 +1,8 @@
 # Material Pipeline Specification
 
-Date: February 22, 2026
-Status: Authoritative
+**Type:** spec
+**Status:** proposed
+**Date:** 2026-02-22
 
 Sources: `archive/voxelizer-greedy-integration-spec.md` §2;
 `archive/voxelizer-chunk-native-output-design-requirements.md` §material_table;

@@ -1,94 +1,60 @@
-# Gestalt WebGPU + WebAssembly Test Bed
+# Gestalt
 
-A general-purpose WebGPU/WebAssembly test bed for visualizing module outputs without coupling to module internals. The host renders generic outputs (meshes, voxels, points, lines, textures) and can load WASM-backed modules.
+A GPU-driven voxel mesh renderer built with Rust/WASM + Svelte 5 + WebGPU.
+
+Live demo: [anjin-byte.github.io/Gestalt](https://anjin-byte.github.io/Gestalt/)
+
+---
 
 ## Repo layout
 
-- `apps/web`: Vite + TypeScript viewer host
-- `crates/*`: Rust crates (WASM modules)
-- `packages/*`: shared TS types/schemas (optional)
-- `.github/workflows/pages.yml`: GitHub Pages deployment
-- `docs/adr`: architecture decision records
+```
+apps/
+  gestalt/          — active Svelte 5 app (pnpm dev targets this)
+packages/
+  phi/              — @gestalt/phi: Svelte 5 UI component kit
+  voxelizer-js/     — TypeScript wrapper for the WASM voxelizer
+crates/             — Rust crates (wasm-pack targets)
+docs/
+  adr/              — architecture decision records (0001–0011)
+  architecture/     — forward-looking specs (WASM boundary protocol, etc.)
+legacy/
+  apps/web/         — Three.js + ModuleHost era (reference only)
+  packages/modules/ — @gestalt/modules (retired)
+```
 
 ## Local development
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev          # starts apps/gestalt at http://localhost:5173
 ```
-
-The viewer runs at `http://localhost:5173`.
 
 ## Build
 
 ```bash
-pnpm build
+pnpm build:wasm   # compile Rust crates → apps/gestalt/src/wasm/ (requires wasm-pack)
+pnpm build        # Vite production build → apps/gestalt/dist/
 ```
 
-Artifacts land in `apps/web/dist`.
-
-## Module plugin interface
-
-Modules implement `TestbedModule` in `apps/web/src/modules/types.ts` and return `ModuleOutput[]`. The host only consumes the interface types.
-
-To add a new module:
-
-1. Create a module in `apps/web/src/modules`.
-2. Export it from `apps/web/src/modules/registry.ts`.
-3. Implement `run()` to return outputs using typed arrays.
-
-## WASM modules
-
-The Rust example is in `crates/wasm_example` and uses wasm-pack for web ES modules.
-There is also a spiral-points example in `crates/wasm_points`, an OBJ loader in `crates/wasm_obj_loader`, and a WebGPU demo in `crates/wasm_webgpu_demo`.
+Or use the convenience scripts:
 
 ```bash
-pnpm build:wasm
+./build.sh        # build:wasm (if wasm-pack available) + build
+./run.sh          # pnpm dev
 ```
 
-Or run manually:
+## WASM crates
 
-```bash
-cd crates/wasm_example
-wasm-pack build --target web --out-dir ../../apps/web/src/wasm/wasm_example
-```
-
-The web host dynamically imports `wasm_example.js` from `apps/web/src/wasm/wasm_example`.
-If you haven't run the wasm build, a small placeholder module is used so the app still boots.
-The spiral points module loads from `apps/web/src/wasm/wasm_points`.
-The OBJ loader module loads from `apps/web/src/wasm/wasm_obj_loader`.
-The WebGPU demo module loads from `apps/web/src/wasm/wasm_webgpu_demo`.
-
-## Demo
-
-Live demo: `https://anjin-byte.github.io/Gestalt/`
-
-## Rendering backend
-
-The default backend is Three.js WebGPURenderer with WebGL2 fallback. The backend is wrapped so another renderer can be swapped in later.
-
-## Tests
-
-Playwright runs smoke + screenshot regression tests:
-
-```bash
-pnpm test:e2e
-```
-
-Tests run the app in deterministic mode with `?test=1`.
-
-To update screenshots:
-
-```bash
-pnpm -C apps/web test:e2e --update-snapshots
-```
-
-## Known limitations / fallback behavior
-
-- WebGPU is attempted first; when unavailable or failing to initialize, the viewer falls back to WebGL2.
-- WASM modules must be built before they can be loaded by the host.
+| Crate | Purpose |
+|-------|---------|
+| `crates/wasm_obj_loader` | OBJ mesh loader |
+| `crates/wasm_webgpu_demo` | WebGPU demo |
+| `crates/wasm_voxelizer` | GPU mesh-to-voxel rasterizer |
+| `crates/wasm_greedy_mesher` | Binary greedy meshing (64³ chunks) |
 
 ## Docs
 
-- WebGPU profiling: `docs/PROFILING.md`
-- ADRs: `docs/adr`
+- **ADRs** — `docs/adr/` (0001–0011, all architectural decisions)
+- **WASM boundary protocol** — `docs/architecture/wasm-boundary-protocol.md`
+- **Vault guide** — `docs/vault-guide.md` (what lives in the Obsidian vault vs. this repo)

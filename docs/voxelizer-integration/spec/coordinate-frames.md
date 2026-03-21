@@ -1,7 +1,8 @@
 # Coordinate Frame Specification
 
-Date: February 22, 2026
-Status: Authoritative
+**Type:** spec
+**Status:** current
+**Date:** 2026-02-22
 
 Source: Refined from `archive/voxelizer-greedy-integration-spec.md` §1
 (the coordinate derivation from that document is preserved here verbatim;

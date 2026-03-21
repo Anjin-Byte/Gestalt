@@ -1,7 +1,8 @@
 # 0007 - Material Strategy
 
-## Status
-Proposed
+**Type:** adr
+**Status:** proposed
+**Date:** 2026-02-03
 
 ## Context
 

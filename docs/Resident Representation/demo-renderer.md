@@ -1,5 +1,9 @@
 # Demo Renderer
 
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
 Spec for the isolated GPU-resident demo module. Custom WebGPU renderer, no Three.js, own canvas.
 
 The purpose of this module is validation: prove the resident architecture described in this vault works end-to-end before integrating it into the full application pipeline.
@@ -13,10 +17,10 @@ This module is a contained experiment. It does not replace the existing Three.js
 **In scope for the initial demo:**
 - Own WebGPU device and canvas lifecycle
 - Hardcoded procedural test scene (no file I/O, no OBJ loading)
-- GPU chunk pool (Option A layouts from [[gpu-chunk-pool]])
+- GPU chunk pool (Option A layouts from [gpu-chunk-pool](gpu-chunk-pool.md))
 - Depth prepass + Hi-Z build + occlusion cull + color pass (Stages R-2 through R-5)
 - Orbit camera with keyboard/mouse input
-- Cascade 0 only — deferred full cascade merge until [[radiance-cascades-impl]] is written
+- Cascade 0 only — deferred full cascade merge until [radiance-cascades-impl](radiance-cascades-impl.md) is written
 
 **Out of scope for the initial demo:**
 - Radiance cascade merge or GI (placeholder ambient only)
@@ -106,7 +110,7 @@ Expected resident chunk count: ~200–300 for this scene (room shell + central s
 On activate, before the first frame:
 
 ```
-1. Allocate chunk pool buffers (see [[gpu-chunk-pool]], Option A layouts)
+1. Allocate chunk pool buffers (see [gpu-chunk-pool](gpu-chunk-pool.md), Option A layouts)
 2. Populate chunk_occupancy_atlas for all resident chunks (CPU writeBuffer)
 3. Populate chunk_coord, chunk_slot_table_gpu (CPU writeBuffer)
 4. Dispatch summary_rebuild for all resident chunks (compute)
@@ -189,7 +193,7 @@ Fragment:
 - Ambient term: `ambient_color * material_albedo`
 - Emissive override: if `is_emissive` flag set on material, output emissive color directly
 
-This is a placeholder. The GI integration (cascade apply pass) slots in here when [[radiance-cascades-impl]] is complete.
+This is a placeholder. The GI integration (cascade apply pass) slots in here when [radiance-cascades-impl](radiance-cascades-impl.md) is complete.
 
 ### hiz_build.wgsl
 
@@ -220,7 +224,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 For the demo, greedy meshing runs once at init over all resident chunks. The algorithm is the same binary greedy mesh used by the existing Rust greedy mesher — ported to WGSL.
 
-See [[pipeline-stages]] Stage R-1 for the full mesh rebuild stage spec.
+See [pipeline-stages](pipeline-stages.md) Stage R-1 for the full mesh rebuild stage spec.
 
 ---
 
@@ -262,16 +266,16 @@ The demo is complete when:
 
 Once the demo renders correctly:
 
-- **Radiance cascades** can be integrated into the color pass (replace placeholder ambient with cascade apply) — see [[radiance-cascades-impl]]
-- **Edit protocol** can be layered on top (Stage 2 dirty tracking → incremental mesh and summary rebuilds) — see [[edit-protocol]]
+- **Radiance cascades** can be integrated into the color pass (replace placeholder ambient with cascade apply) — see [radiance-cascades-impl](radiance-cascades-impl.md)
+- **Edit protocol** can be layered on top (Stage 2 dirty tracking → incremental mesh and summary rebuilds) — see [edit-protocol](edit-protocol.md)
 - **Migration to full pipeline** becomes a matter of wiring the demo's GPU resources into the main application's module system rather than a standalone canvas
 
 ---
 
 ## See Also
 
-- [[gpu-chunk-pool]] — slot allocation, buffer layouts, mesh pool; this module implements Option A of both
-- [[pipeline-stages]] — full stage spec; demo implements R-2 through R-5 (R-6 through R-8 deferred)
-- [[depth-prepass]] — depth prepass and Hi-Z raster optimization chain
-- [[edit-protocol]] — what to add when the demo needs runtime voxel edits
-- [[radiance-cascades-impl]] — next renderer document; cascade 0 integration into the demo color pass
+- [gpu-chunk-pool](gpu-chunk-pool.md) — slot allocation, buffer layouts, mesh pool; this module implements Option A of both
+- [pipeline-stages](pipeline-stages.md) — full stage spec; demo implements R-2 through R-5 (R-6 through R-8 deferred)
+- [depth-prepass](depth-prepass.md) — depth prepass and Hi-Z raster optimization chain
+- [edit-protocol](edit-protocol.md) — what to add when the demo needs runtime voxel edits
+- [radiance-cascades-impl](radiance-cascades-impl.md) — next renderer document; cascade 0 integration into the demo color pass

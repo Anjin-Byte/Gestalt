@@ -1,5 +1,9 @@
 # Canonical Runtime Chunk Contract
 
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
 This document defines the chunk as the authoritative unit of voxel-space truth at runtime.
 All other structures are either producers that write into chunks, or consumers that read from them.
 
@@ -265,7 +269,7 @@ Chunks are not all in memory simultaneously. The residency system manages which 
 
 ## See Also
 
-- [[layer-model]] — full producer / canonical / consumer layer definitions
-- [[gpu-chunk-pool]] — GPU residency pool design (slot allocation, atlas layout, upload protocol)
-- [[traversal-acceleration]] — occupancy summary and bricklet design for A&W / GI
-- [[edit-protocol]] — full edit propagation semantics including GPU-side invalidation
+- [layer-model](layer-model.md) — full producer / canonical / consumer layer definitions
+- [gpu-chunk-pool](gpu-chunk-pool.md) — GPU residency pool design (slot allocation, atlas layout, upload protocol)
+- [traversal-acceleration](traversal-acceleration.md) — occupancy summary and bricklet design for A&W / GI
+- [edit-protocol](edit-protocol.md) — full edit propagation semantics including GPU-side invalidation

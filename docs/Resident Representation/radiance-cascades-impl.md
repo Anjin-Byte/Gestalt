@@ -1,8 +1,12 @@
 # Radiance Cascades Implementation
 
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
 Cascade build, merge, and apply passes grounded in the GPU-resident chunk runtime.
 
-This document is the implementation spec. For the architectural decision and rationale see [[../greedy-meshing-docs/adr/0010-radiance-cascades]].
+This document is the implementation spec. For the architectural decision and rationale see [ADR-0010](../adr/0010-radiance-cascades.md).
 
 ---
 
@@ -31,7 +35,7 @@ Radiance cascades span two layers:
 | Cascade merge (R-7) | Derived intermediate | Bilateral blend from high → low cascade |
 | GI application (R-5 / R-8) | Product 2 consumer | Fragment-level hemisphere integration from merged cascade 0 |
 
-Cascade build **must not** be filtered by Hi-Z, frustum cull results, or any Product 3 data. A probe behind the camera may march rays through chunks occluded from the camera. Those chunks are still valid emissive sources. See [[layer-model]].
+Cascade build **must not** be filtered by Hi-Z, frustum cull results, or any Product 3 data. A probe behind the camera may march rays through chunks occluded from the camera. Those chunks are still valid emissive sources. See [layer-model](layer-model.md).
 
 ---
 
@@ -102,7 +106,7 @@ No new chunk pool buffers are required. The cascade system reads from:
 - `chunk_slot_table_gpu` — world coordinate → slot index lookup
 - `chunk_palette_buf` — emissive radiance at confirmed hit
 
-All of these already exist in the chunk pool (see [[gpu-chunk-pool]]). The cascade system is a new consumer of existing data — a clean Layer 3 addition.
+All of these already exist in the chunk pool (see [gpu-chunk-pool](gpu-chunk-pool.md)). The cascade system is a new consumer of existing data — a clean Layer 3 addition.
 
 ---
 
@@ -166,7 +170,7 @@ The short intervals in lower cascades are what makes per-probe cost tractable. C
 
 ## The Traversal Call
 
-Each probe direction calls `traceSegments` as defined in [[traversal-acceleration]].
+Each probe direction calls `traceSegments` as defined in [traversal-acceleration](traversal-acceleration.md).
 
 ```wgsl
 // Inside cascade_build.wgsl, per probe direction
@@ -308,7 +312,7 @@ Per frame:
 
 ### Invalidation on Voxel Edit
 
-When chunks are dirtied (edit protocol dirty bits — see [[edit-protocol]]), probes whose rays intersect those chunks may hold stale radiance. Invalidation strategy:
+When chunks are dirtied (edit protocol dirty bits — see [edit-protocol](edit-protocol.md)), probes whose rays intersect those chunks may hold stale radiance. Invalidation strategy:
 
 ```
 For each dirty chunk (from dirty_chunks bitset):
@@ -326,7 +330,7 @@ At Stage 3 GPU-driven scheduling, this pass runs automatically as part of the pr
 
 ## Integration with the Demo Renderer
 
-The demo renderer (see [[demo-renderer]]) targets cascade 0 only for the MVP.
+The demo renderer (see [demo-renderer](demo-renderer.md)) targets cascade 0 only for the MVP.
 
 **Cascade 0 simplifications:**
 - 1×1 per-probe octahedral map = no directional interpolation needed — each probe is one radiance value (scalar irradiance along the surface normal)
@@ -387,7 +391,7 @@ At 1920×1080, 4 cascades, RGBA16F (8 bytes/texel):
 | `cascade_uniforms` | < 1 KB | Per-pass |
 | **Total** | **~128 MB** | |
 
-Cascade memory scales with screen resolution, not scene size. Halving resolution halves cascade memory. This is independent of the chunk pool budget (see [[gpu-chunk-pool]]).
+Cascade memory scales with screen resolution, not scene size. Halving resolution halves cascade memory. This is independent of the chunk pool budget (see [gpu-chunk-pool](gpu-chunk-pool.md)).
 
 ---
 
@@ -395,7 +399,7 @@ Cascade memory scales with screen resolution, not scene size. Halving resolution
 
 | Component | Status | Notes |
 |---|---|---|
-| `traceSegments` WGSL implementation | Needs impl | Depends on chunk DDA and voxel DDA from [[traversal-acceleration]] |
+| `traceSegments` WGSL implementation | Needs impl | Depends on chunk DDA and voxel DDA from [traversal-acceleration](traversal-acceleration.md) |
 | Octahedral map sampling for N>1 cascade | Needs design | Hemisphere integration over 2^i × 2^i texels per probe |
 | Specular cone query | Deferred | Roughness → cone angle → directional cascade sample |
 | Multi-bounce | Deferred | Feed cascade output as emissive source in subsequent frame |
@@ -407,10 +411,10 @@ Cascade memory scales with screen resolution, not scene size. Halving resolution
 
 ## See Also
 
-- [[traversal-acceleration]] — `traceSegments` contract; `traceSegments` is the cascade build ray kernel
-- [[pipeline-stages]] — Stage R-6 (cascade build), R-7 (merge), R-5 (GI application); buffer read/write ownership
-- [[gpu-chunk-pool]] — `chunk_slot_table_gpu`, `chunk_flags_buf`, `occupancy_summary_buf`; all consumed read-only
-- [[edit-protocol]] — dirty chunk tracking; cascade probe invalidation reads `dirty_chunks`
-- [[layer-model]] — why cascade build is Product 1 (world-space, not camera-filtered)
-- [[demo-renderer]] — cascade 0 MVP integration
-- [[../greedy-meshing-docs/adr/0010-radiance-cascades]] — ADR: decision rationale, variant comparison, memory math
+- [traversal-acceleration](traversal-acceleration.md) — `traceSegments` contract; `traceSegments` is the cascade build ray kernel
+- [pipeline-stages](pipeline-stages.md) — Stage R-6 (cascade build), R-7 (merge), R-5 (GI application); buffer read/write ownership
+- [gpu-chunk-pool](gpu-chunk-pool.md) — `chunk_slot_table_gpu`, `chunk_flags_buf`, `occupancy_summary_buf`; all consumed read-only
+- [edit-protocol](edit-protocol.md) — dirty chunk tracking; cascade probe invalidation reads `dirty_chunks`
+- [layer-model](layer-model.md) — why cascade build is Product 1 (world-space, not camera-filtered)
+- [demo-renderer](demo-renderer.md) — cascade 0 MVP integration
+- [ADR-0010](../adr/0010-radiance-cascades.md) — ADR: decision rationale, variant comparison, memory math

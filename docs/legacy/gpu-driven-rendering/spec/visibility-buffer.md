@@ -1,8 +1,8 @@
 # Visibility Buffer and Meshlet Design
 
-Date: March 9, 2026
-Status: **Future** — not required for initial pipeline. Documents the target
-state for Stage 3-4 of the culling granularity progression.
+**Type:** spec
+**Status:** proposed
+**Date:** 2026-03-09
 
 ---
 

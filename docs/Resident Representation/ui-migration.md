@@ -1,10 +1,14 @@
 # UI Migration Plan
 
+**Type:** spec
+**Status:** stale
+**Date:** 2026-03-21
+
 Transition from the current vanilla-TS DOM testbed to the Svelte 5 + Tailwind 4
 design system, rebuilt around the GPU-native architecture's actual surface area.
 
-Related: [[ui-design-system]] (component and token reference), [[debug-profiling]]
-(GPU panel data sources), [[gpu-chunk-pool]] (pool panel data), [[edit-protocol]]
+Related: [ui-design-system](ui-design-system.md) (component and token reference), [debug-profiling](debug-profiling.md)
+(GPU panel data sources), [gpu-chunk-pool](gpu-chunk-pool.md) (pool panel data), [edit-protocol](edit-protocol.md)
 (protocol panel data).
 
 ---
@@ -65,7 +69,7 @@ Visually it is a 56px icon column; behaviorally it is a tab group —
 one active panel at a time, arrow-key navigation, correct `aria-selected`
 and focus management provided by the primitive.
 
-The horizontal tab strip in [[ui-design-system]] Section 5 is a separate
+The horizontal tab strip in [ui-design-system](ui-design-system.md) Section 5 is a separate
 component used for sub-views *within* a panel (e.g., Timeline / Counters
 inside PerformancePanel). The sidebar is the outer navigation layer.
 
@@ -109,7 +113,7 @@ regardless of which panel is active.
 
 - Slot utilization: `N used / N_SLOTS` with a fill bar
 - Memory breakdown table: occupancy atlas, palette + index, summaries, mesh pool
-  (values from [[gpu-chunk-pool]] memory budget; sourced from CPU-side accounting)
+  (values from [gpu-chunk-pool](gpu-chunk-pool.md) memory budget; sourced from CPU-side accounting)
 - Resident chunk list: scrollable table of active slots with coord, version,
   `is_empty` / `has_emissive` flags
 - Evict button per slot (dev tool)
@@ -124,12 +128,12 @@ regardless of which panel is active.
 - Pass last run timestamps (when did each queue last flush)
 
 Data source: the same `queue_counts` + `DiagCounters` readback already
-specified in [[debug-profiling]] — one async readback per frame, displayed here.
+specified in [debug-profiling](debug-profiling.md) — one async readback per frame, displayed here.
 
 #### PerformancePanel
 *New — no current equivalent; replaces floating FPS counter*
 
-- Pass timeline canvas (scrolling stacked bar chart, per [[debug-profiling]])
+- Pass timeline canvas (scrolling stacked bar chart, per [debug-profiling](debug-profiling.md))
 - Per-pass duration table: current frame, min, max, avg
 - Frame budget indicator (16.67ms / 33.33ms lines)
 - Timestamp query availability badge (enabled / fallback)
@@ -298,7 +302,7 @@ implementation state of GPU arch).
 ### Phase 5 — StatsBar + Polish
 
 Replace `debugOverlay.ts` HUD with `StatsBar.svelte` (minimal, on-canvas FPS
-and frame ms). Apply full Viaduct design system polish per [[ui-design-system]].
+and frame ms). Apply full Viaduct design system polish per [ui-design-system](ui-design-system.md).
 Remove `style.css`.
 
 Deliverable: `style.css` deleted; all styling from `app.css` + Tailwind classes.
@@ -337,7 +341,7 @@ panels can be built and styled independently.
 
 ## See Also
 
-- [[ui-design-system]] — component reference, token values, glassmorphism patterns
-- [[debug-profiling]] — `DiagCounters` and `queue_counts` data sources for EditProtocol and Performance panels
-- [[gpu-chunk-pool]] — memory budget figures for GpuPool panel
-- [[edit-protocol]] — queue semantics displayed in EditProtocol panel
+- [ui-design-system](ui-design-system.md) — component reference, token values, glassmorphism patterns
+- [debug-profiling](debug-profiling.md) — `DiagCounters` and `queue_counts` data sources for EditProtocol and Performance panels
+- [gpu-chunk-pool](gpu-chunk-pool.md) — memory budget figures for GpuPool panel
+- [edit-protocol](edit-protocol.md) — queue semantics displayed in EditProtocol panel

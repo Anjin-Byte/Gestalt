@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gestalt Testbed</title>
+    <title>Gestalt</title>
+    <!--
+      coi-serviceworker must load before any other script.
+      In dev the Vite server sets COOP/COEP headers directly.
+      In production (GitHub Pages) this service worker injects those headers
+      so that SharedArrayBuffer is available for the renderer worker.
+      See: docs/architecture/wasm-boundary-protocol.md
+    -->
+    <script src="/coi-serviceworker.js"></script>
   </head>
   <body>
     <div id="app"></div>

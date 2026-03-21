@@ -1,6 +1,8 @@
 # Frame Graph — Pass Ordering and Resource Dependencies
 
-Date: March 9, 2026
+**Type:** legacy
+**Status:** legacy
+**Date:** 2026-03-09
 
 ---
 

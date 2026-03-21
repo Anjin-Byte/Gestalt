@@ -1,5 +1,9 @@
 # GPU Chunk Pool
 
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
 Slot allocation, atlas layout, and CPU↔GPU sync for the GPU-resident chunk runtime.
 
 ---
@@ -255,7 +259,7 @@ The fence callback is the only sync point — and it signals completion, not dat
 
 A common failure: async rebuild completes after eviction. The slot has been reassigned to a different chunk. The rebuild result must not be written to the now-reassigned slot.
 
-Solution: version tagging (from [[edit-protocol]]).
+Solution: version tagging (from [edit-protocol](edit-protocol.md)).
 
 ```
 At rebuild dispatch:
@@ -307,8 +311,8 @@ Well within a modern GPU's budget. Reduce `N_SLOTS` to 512 for lower-end devices
 
 ## See Also
 
-- [[edit-protocol]] — control plane buffers, dirty/stale tracking, work queues
-- [[chunk-field-registry]] — data plane fields and their classification
-- [[traversal-acceleration]] — how traversal reads from the occupancy atlas (Stage R-6)
-- [[pipeline-stages]] — where pool data is consumed in the frame
-- [[extension-seams]] — why slot allocation is a storage problem, not a scheduling problem
+- [edit-protocol](edit-protocol.md) — control plane buffers, dirty/stale tracking, work queues
+- [chunk-field-registry](chunk-field-registry.md) — data plane fields and their classification
+- [traversal-acceleration](traversal-acceleration.md) — how traversal reads from the occupancy atlas (Stage R-6)
+- [pipeline-stages](pipeline-stages.md) — where pool data is consumed in the frame
+- [extension-seams](extension-seams.md) — why slot allocation is a storage problem, not a scheduling problem

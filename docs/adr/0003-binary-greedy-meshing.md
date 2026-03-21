@@ -1,7 +1,8 @@
 # 0003 - Binary Greedy Meshing Algorithm
 
-## Status
-Accepted
+**Type:** adr
+**Status:** accepted
+**Date:** 2026-02-03
 
 ## Context
 

@@ -1,9 +1,10 @@
 # ADR-0010: Radiance Cascades for Global Illumination
 
-Date: March 9, 2026
-Status: **Proposed**
+**Type:** adr
+**Status:** proposed
+**Date:** 2026-03-09
 Depends on: ADR-0001 (renderer choice), ADR-0003 (binary greedy meshing), ADR-0007 (material strategy), ADR-0009 (GPU-compact voxelizer integration)
-Implemented by: ADR-0011 (Hybrid GPU-Driven Pipeline) — see [`docs/gpu-driven-rendering/`](../../gpu-driven-rendering/INDEX.md)
+Implemented by: ADR-0011 (Hybrid GPU-Driven Pipeline) — see [gpu-driven-rendering INDEX](../legacy/gpu-driven-rendering/INDEX.md)
 
 ---
 

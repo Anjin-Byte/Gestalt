@@ -1,7 +1,8 @@
 # 0006 - Level of Detail (LOD) Strategy
 
-## Status
-Proposed
+**Type:** adr
+**Status:** proposed
+**Date:** 2026-02-03
 
 ## Context
 

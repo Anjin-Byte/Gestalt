@@ -1,5 +1,9 @@
 # Viaduct UI Design System
 
+**Type:** spec
+**Status:** stale
+**Date:** 2026-03-21
+
 its dark-mode-first "GitHub look", responsive layout, and component patterns.
 
 ---

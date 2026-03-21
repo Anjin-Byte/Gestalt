@@ -1,3 +1,6 @@
+**Type:** legacy
+**Status:** legacy
+
 > **SUPERSEDED** — This document records the historical reasoning for the sparse brick output format.
 > That format was the basis for Architecture A; Architecture B (GPU-compact) is the current design.
 > The GPU compaction insight this document develops is what made Architecture B possible.
@@ -8,7 +11,7 @@
 
 # The Original Reasoning Behind Sparse Brick Occupancy Batches
 
-Date: February 19, 2026
+**Date:** 2026-02-19
 Status: Draft article
 Audience: Rendering, voxelizer, and greedy-mesher maintainers
 

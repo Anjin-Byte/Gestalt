@@ -1,9 +1,14 @@
 # Meshlet Surface Clusters
 
-Sub-chunk surface cluster tier for finer-grained GPU visibility selection.
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
+> Sub-chunk surface cluster tier for finer-grained GPU visibility selection.
+
 Extends the R‑4 occlusion cull pass with a two-phase dispatch; no other stage is affected.
 
-Related: [[pipeline-stages]] (R‑4 two-tier cull), [[gpu-chunk-pool]] (pool design pattern), [[edit-protocol]] (dirty/stale/compaction machinery), [[layer-model]] (Product 3 framing).
+Related: [pipeline-stages](pipeline-stages.md) (R‑4 two-tier cull), [gpu-chunk-pool](gpu-chunk-pool.md) (pool design pattern), [edit-protocol](edit-protocol.md) (dirty/stale/compaction machinery), [layer-model](layer-model.md) (Product 3 framing).
 
 ---
 
@@ -31,7 +36,7 @@ Meshlets are **Product 3 (camera-visibility structure)** exclusively.
   and `occupancy_summary` only; it does not know meshlets exist.
 - A "BVH over meshlets" (if ever added for raster cluster hierarchies) is a Product 3
   structure for raster selection. It is not a "BVH over voxels" and does not conflict with
-  [[traversal-acceleration]]'s explicit rejection of BVH for voxel ray traversal.
+  [traversal-acceleration](traversal-acceleration.md)'s explicit rejection of BVH for voxel ray traversal.
 
 **Results from meshlet culling must never feed into Product 1 queries.** A meshlet rejected
 by Hi-Z for the current camera position is still a valid target for a probe ray, a shadow
@@ -294,7 +299,7 @@ For 1024 slots, Option S:
 
 In practice, most slots are empty or sparse. Realistic budget is closer to 10–20MB for a
 typical test scene. The meshlet pool should use a freelist allocator matching the mesh pool
-pattern (Option A fixed-reservation, Option B variable freelist — see [[gpu-chunk-pool]]).
+pattern (Option A fixed-reservation, Option B variable freelist — see [gpu-chunk-pool](gpu-chunk-pool.md)).
 
 ---
 
@@ -328,8 +333,8 @@ pass integration → R‑4 phase 1 `chunk_visible_list` output → R‑4 phase 2
 
 ## See Also
 
-- [[pipeline-stages]] — R‑4 stage definition; buffer ownership summary
-- [[gpu-chunk-pool]] — pool allocator pattern; slot lifecycle; mesh pool design
-- [[edit-protocol]] — `stale_meshlet` extends the dirty/compaction/version-swap pattern
-- [[layer-model]] — Product 3 definition; why meshlets must not filter Product 1 queries
-- [[traversal-acceleration]] — Product 1; "BVH over meshlets" is a different domain
+- [pipeline-stages](pipeline-stages.md) — R‑4 stage definition; buffer ownership summary
+- [gpu-chunk-pool](gpu-chunk-pool.md) — pool allocator pattern; slot lifecycle; mesh pool design
+- [edit-protocol](edit-protocol.md) — `stale_meshlet` extends the dirty/compaction/version-swap pattern
+- [layer-model](layer-model.md) — Product 3 definition; why meshlets must not filter Product 1 queries
+- [traversal-acceleration](traversal-acceleration.md) — Product 1; "BVH over meshlets" is a different domain

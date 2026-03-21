@@ -1,5 +1,6 @@
 # Bug Report: Chrome/Firefox Layout Shift in DemoPanel
 
+**Type:** reference
 **Date:** 2026-03-20
 **Status:** Open — root cause unconfirmed, all attempted fixes ineffective
 **Browsers affected:** Chrome, Firefox

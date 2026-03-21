@@ -1,6 +1,8 @@
 # Hybrid Transition Plan
 
-Date: March 9, 2026
+**Type:** legacy
+**Status:** legacy
+**Date:** 2026-03-09
 
 ---
 

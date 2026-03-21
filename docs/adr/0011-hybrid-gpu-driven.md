@@ -1,8 +1,9 @@
 # ADR-0011: Hybrid GPU-Driven Rendering Pipeline
 
-Date: March 9, 2026
-Status: **Proposed**
-Amends: ADR-0001 (Renderer Choice)
+**Type:** adr
+**Status:** proposed
+**Supersedes:** [ADR-0001](0001-renderer-choice.md), [ADR-0008](0008-design-gap-mitigations.md)
+**Date:** 2026-03-09
 Depends on: ADR-0003 (Binary Greedy Meshing), ADR-0007 (Material Strategy), ADR-0010 (Radiance Cascades)
 
 ---
@@ -165,6 +166,6 @@ backend" — is narrowed:
 - [`../design/hybrid-transition.md`](../design/hybrid-transition.md) — incremental migration phases
 - [`../spec/frame-graph.md`](../spec/frame-graph.md) — pass ordering and resource dependencies
 - [`../spec/visibility-buffer.md`](../spec/visibility-buffer.md) — future meshlet/visibility buffer
-- [`../../greedy-meshing-docs/adr/0001-renderer-choice.md`](../../greedy-meshing-docs/adr/0001-renderer-choice.md) — original decision (amended)
-- [`../../greedy-meshing-docs/adr/0010-radiance-cascades.md`](../../greedy-meshing-docs/adr/0010-radiance-cascades.md) — radiance cascades (consumer)
+- [`0001-renderer-choice.md`](0001-renderer-choice.md) — original decision (amended)
+- [`0010-radiance-cascades.md`](0010-radiance-cascades.md) — radiance cascades (consumer)
 - [`../../culling/hiz-occlusion-culling-report.md`](../../culling/hiz-occlusion-culling-report.md) — Hi-Z readiness report

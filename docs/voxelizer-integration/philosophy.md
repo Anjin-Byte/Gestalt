@@ -1,7 +1,8 @@
 # The Canonical Store Principle
 
-Date: February 22, 2026
-Status: Authoritative — read before any other document in this section
+**Type:** philosophy
+**Status:** current
+**Date:** 2026-02-22
 
 ---
 

@@ -1,8 +1,6 @@
 <script lang="ts">
   import { viewerStore } from "$lib/stores/viewer";
-  import Section from "$lib/components/ui/Section.svelte";
-  import CheckboxRow from "$lib/components/ui/CheckboxRow.svelte";
-  import ActionButton from "$lib/components/ui/ActionButton.svelte";
+  import { Section, CheckboxRow, ActionButton } from "@gestalt/phi";
 </script>
 
 <div class="panel-content">

@@ -1,7 +1,9 @@
 # 0008 - Design Gap Mitigations
 
-## Status
-Proposed
+**Type:** adr
+**Status:** superseded
+**Superseded by:** [ADR-0011](0011-hybrid-gpu-driven.md)
+**Date:** 2026-02-03
 
 ## Context
 

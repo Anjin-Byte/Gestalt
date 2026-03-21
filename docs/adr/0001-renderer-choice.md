@@ -1,7 +1,9 @@
 # 0001 - Renderer Choice
 
-## Status
-Accepted
+**Type:** adr
+**Status:** superseded
+**Superseded by:** [ADR-0011](0011-hybrid-gpu-driven.md)
+**Date:** 2026-01-11
 
 ## Context
 The test bed needs WebGPU with a fallback for browsers without WebGPU, and should allow swapping rendering backends later.

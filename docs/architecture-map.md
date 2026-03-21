@@ -1,7 +1,8 @@
 # Gestalt Architecture Map — Data Structures, Algorithms, and Relationships
 
-Date: March 9, 2026
-Status: Living document
+**Type:** reference
+**Status:** current
+**Date:** 2026-03-09
 
 ---
 
@@ -495,7 +496,7 @@ Based on the shared dependency analysis, the highest-leverage work items are:
 
 ## See Also
 
-- [`greedy-meshing-docs/INDEX.md`](greedy-meshing-docs/INDEX.md) — meshing documentation hub
+- [`legacy/greedy-meshing-docs/INDEX.md`](legacy/greedy-meshing-docs/INDEX.md) — meshing documentation hub
 - [`voxelizer-integration/INDEX.md`](voxelizer-integration/INDEX.md) — voxelizer integration hub
 - [`gpu-driven-rendering/INDEX.md`](gpu-driven-rendering/INDEX.md) — rendering pipeline hub
 - [`culling/hiz-occlusion-culling-report.md`](culling/hiz-occlusion-culling-report.md) — culling readiness report

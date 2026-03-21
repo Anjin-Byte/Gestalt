@@ -1,3 +1,6 @@
+**Type:** legacy
+**Status:** legacy
+
 > **SUPERSEDED** — This document describes Architecture A (CPU-side occupancy scan and material lookup).
 > Architecture B (GPU-compact) is the current design. See `docs/voxelizer-integration/`.
 > **Valuable content preserved in:**
@@ -11,7 +14,7 @@
 
 # Voxelizer → Greedy-Native Integration: Architecture Specification
 
-Date: February 20, 2026
+**Date:** 2026-02-20
 Status: Authoritative specification
 Audience: Voxelizer, WASM bindings, worker/runtime, and greedy-mesher maintainers
 

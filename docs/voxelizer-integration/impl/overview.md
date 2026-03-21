@@ -1,7 +1,8 @@
 # Implementation Overview
 
-Date: February 22, 2026
-Status: Authoritative
+**Type:** spec
+**Status:** proposed
+**Date:** 2026-02-22
 
 ---
 

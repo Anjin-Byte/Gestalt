@@ -1,7 +1,8 @@
 # UI Interaction Design
 
-**Status:** Active
-**Scope:** Testbed UI interaction patterns, component contracts, and design philosophy
+**Type:** spec
+**Status:** stale
+**Date:** 2026-03-21
 
 ---
 

@@ -1,6 +1,8 @@
 # GPU-Driven Rendering — Philosophy
 
-Date: March 9, 2026
+**Type:** legacy
+**Status:** legacy
+**Date:** 2026-03-09
 
 ---
 
@@ -124,5 +126,5 @@ the rendering backend for the application's dominant workload.
 - [`adr/0011-hybrid-gpu-driven.md`](adr/0011-hybrid-gpu-driven.md) — formal decision record
 - [`design/three-js-limits.md`](design/three-js-limits.md) — detailed evidence for the Three.js gap
 - [`design/pipeline-architecture.md`](design/pipeline-architecture.md) — target frame pipeline
-- [`../greedy-meshing-docs/adr/0010-radiance-cascades.md`](../greedy-meshing-docs/adr/0010-radiance-cascades.md) — radiance cascades ADR
+- [`../../adr/0010-radiance-cascades.md`](../../adr/0010-radiance-cascades.md) — radiance cascades ADR
 - [`../culling/hiz-occlusion-culling-report.md`](../culling/hiz-occlusion-culling-report.md) — Hi-Z readiness report

@@ -1,7 +1,8 @@
 # GPU-Driven Rendering — Documentation Index
 
-Date: March 9, 2026
-Status: Authoritative
+**Type:** legacy
+**Status:** legacy
+**Date:** 2026-03-09
 
 ---
 
@@ -26,9 +27,9 @@ When documents disagree, the following precedence applies:
 | Priority | Document | Scope |
 |----------|----------|-------|
 | 1 | This section (all docs) | Rendering pipeline architecture |
-| 2 | `docs/greedy-meshing-docs/` ADRs | Meshing, chunks, materials |
+| 2 | `docs/adr/` ADRs | Meshing, chunks, materials |
 | 3 | `docs/culling/` | Hi-Z culling details |
-| 4 | `docs/greedy-meshing-docs/threejs-buffer-management.md` | **Superseded** for chunk rendering by this section (remains valid for non-chunk Three.js objects) |
+| 4 | `docs/legacy/greedy-meshing-docs/threejs-buffer-management.md` | **Superseded** for chunk rendering by this section (remains valid for non-chunk Three.js objects) |
 
 ---
 
@@ -52,7 +53,7 @@ When documents disagree, the following precedence applies:
 ### Working on radiance cascades
 1. [`design/pipeline-architecture.md`](design/pipeline-architecture.md) — where cascades fit in the frame
 2. [`spec/frame-graph.md`](spec/frame-graph.md) — Pass 4 dependencies
-3. [`../greedy-meshing-docs/adr/0010-radiance-cascades.md`](../greedy-meshing-docs/adr/0010-radiance-cascades.md) — cascade algorithm details
+3. [`../../adr/0010-radiance-cascades.md`](../../adr/0010-radiance-cascades.md) — cascade algorithm details
 
 ### LLM context window load (minimal set)
 1. This file (`INDEX.md`)
@@ -92,19 +93,19 @@ When documents disagree, the following precedence applies:
 
 ```
 docs/
-├── gpu-driven-rendering/     ← THIS SECTION (rendering pipeline)
+├── legacy/gpu-driven-rendering/     ← THIS SECTION (rendering pipeline)
 │   ├── Consumes output from:
-│   │   ├── greedy-meshing-docs/   (chunk mesh data, material system)
+│   │   ├── legacy/greedy-meshing-docs/   (chunk mesh data, material system)
 │   │   └── voxelizer-integration/ (occupancy data for cascades)
 │   │
 │   ├── Implements features from:
-│   │   ├── greedy-meshing-docs/adr/0010-radiance-cascades.md
+│   │   ├── adr/0010-radiance-cascades.md
 │   │   └── culling/hiz-occlusion-culling-report.md
 │   │
 │   └── Amends:
-│       └── greedy-meshing-docs/adr/0001-renderer-choice.md
+│       └── adr/0001-renderer-choice.md
 │
-├── greedy-meshing-docs/      (meshing algorithm, chunk system, materials)
+├── legacy/greedy-meshing-docs/      (meshing algorithm, chunk system, materials)
 ├── voxelizer-integration/    (GPU voxelizer → chunk manager flow)
 └── culling/                  (Hi-Z research and gap analysis)
 ```
@@ -115,11 +116,11 @@ docs/
 
 | ADR | Section | Decision | Relevance |
 |-----|---------|----------|-----------|
-| [0001](../greedy-meshing-docs/adr/0001-renderer-choice.md) | Greedy meshing | Three.js renderer | **Amended** by ADR-0011 |
-| [0003](../greedy-meshing-docs/adr/0003-binary-greedy-meshing.md) | Greedy meshing | Binary greedy meshing | Provides mesh data consumed by pipeline |
-| [0007](../greedy-meshing-docs/adr/0007-material-strategy.md) | Greedy meshing | Material atlas + UVs | Fragment shader reads atlas |
-| [0009](../voxelizer-integration/adr/0009-architecture-b.md) | Voxelizer | GPU-compact integration | Provides occupancy data for cascades |
-| [0010](../greedy-meshing-docs/adr/0010-radiance-cascades.md) | Greedy meshing | Radiance cascades | Pass 4 of the frame pipeline |
+| [0001](../../adr/0001-renderer-choice.md) | Greedy meshing | Three.js renderer | **Amended** by ADR-0011 |
+| [0003](../../adr/0003-binary-greedy-meshing.md) | Greedy meshing | Binary greedy meshing | Provides mesh data consumed by pipeline |
+| [0007](../../adr/0007-material-strategy.md) | Greedy meshing | Material atlas + UVs | Fragment shader reads atlas |
+| [0009](../../adr/0009-architecture-b.md) | Voxelizer | GPU-compact integration | Provides occupancy data for cascades |
+| [0010](../../adr/0010-radiance-cascades.md) | Greedy meshing | Radiance cascades | Pass 4 of the frame pipeline |
 | [0011](adr/0011-hybrid-gpu-driven.md) | **This section** | Hybrid GPU-driven pipeline | Core rendering decision |
 
 ---

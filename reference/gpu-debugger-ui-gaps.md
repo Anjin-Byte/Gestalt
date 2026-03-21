@@ -1,5 +1,7 @@
 # GPU Debugger UI — State Coverage & Component Gaps
 
+**Type:** reference
+**Status:** current
 **Date:** 2026-03-20
 **Scope:** UI components and views needed to debug and track GPU state at runtime in the Gestalt testbed.
 

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { ModuleHost } from "@gestalt/modules";
   import ScenePanel from "../panels/ScenePanel.svelte";
   import GpuPoolPanel from "../panels/GpuPoolPanel.svelte";
   import EditProtocolPanel from "../panels/EditProtocolPanel.svelte";
@@ -8,13 +7,7 @@
   import SettingsPanel from "../panels/SettingsPanel.svelte";
   import DemoPanel from "../panels/DemoPanel.svelte";
 
-  let {
-    host,
-    activePanel,
-  }: {
-    host: ModuleHost | null;
-    activePanel: string;
-  } = $props();
+  let { activePanel }: { activePanel: string } = $props();
 
   const MIN_WIDTH = 180;
   const MAX_WIDTH = 520;
@@ -63,7 +56,7 @@
   {:else if activePanel === "debug"}
     <div class="panel-tab-content"><DebugPanel /></div>
   {:else if activePanel === "settings"}
-    <div class="panel-tab-content"><SettingsPanel {host} /></div>
+    <div class="panel-tab-content"><SettingsPanel /></div>
   {:else if activePanel === "demo"}
     <div class="panel-tab-content"><DemoPanel /></div>
   {/if}

@@ -1,64 +1,44 @@
 <script lang="ts">
-  import { ModuleHost } from "@gestalt/modules";
-  import type { ModuleOutput } from "@gestalt/modules";
-  import { viewerStore } from "$lib/stores/viewer";
-  import { createSvelteUiApi, scheduleRun } from "$lib/stores/moduleControls";
-  import { requestGpuDevice } from "$lib/utils/gpu";
-  import { stubModule } from "./modules/stub";
   import Sidebar from "$lib/components/shell/Sidebar.svelte";
   import PanelArea from "$lib/components/shell/PanelArea.svelte";
   import Viewport from "$lib/components/shell/Viewport.svelte";
   import StatusBar from "$lib/components/shell/StatusBar.svelte";
+  import { RendererBridge } from "./renderer/RendererBridge";
+  import { rendererBridgeStore } from "$lib/stores/rendererBridge";
 
   let activePanel = $state("scene");
-  let host = $state<ModuleHost | null>(null);
-
-  const modules = [stubModule];
-  const uiApi = createSvelteUiApi();
-
-  const logger = {
-    info: (m: string) => console.info(m),
-    warn: (m: string) => console.warn(m),
-    error: (m: string) => console.error(m),
-  };
 
   function onTabClick(value: string) {
     activePanel = activePanel === value ? "" : value;
   }
 
+  // Initialize the renderer worker bridge.
+  // Resolves to null when COOP/COEP headers are absent (SAB unavailable),
+  // or when the worker fails to initialize — the app continues without it.
   $effect(() => {
-    const viewer = $viewerStore;
-    if (!viewer) return;
+    let bridge: RendererBridge | null = null;
 
-    const ctx = {
-      requestGpuDevice,
-      logger,
-      baseUrl: import.meta.env.BASE_URL,
-      appendOutputs: (outputs: ModuleOutput[]) => viewer.appendOutputs(outputs),
-      clearChunkOutputs: () => viewer.clearChunkOutputs(),
-    };
-
-    let newHost: ModuleHost;
-    newHost = new ModuleHost(modules, uiApi, ctx, (outputs) => {
-      viewer.setOutputs(outputs);
+    RendererBridge.create().then((b) => {
+      bridge = b;
+      rendererBridgeStore.set(b);
     });
 
-    host = newHost;
-    scheduleRun.set(() => newHost.scheduleRun());
-    void newHost.activate(modules[0].id);
-
     return () => {
-      void newHost.dispose();
-      host = null;
-      scheduleRun.set(() => {});
+      bridge?.terminate();
+      rendererBridgeStore.set(null);
     };
+  });
+
+  // Signal to Playwright that the shell has mounted.
+  $effect(() => {
+    document.body.dataset.ready = "true";
   });
 </script>
 
 <div class="dark app-shell">
   <div class="layout">
     <Sidebar {activePanel} {onTabClick} />
-    <PanelArea {host} {activePanel} />
+    <PanelArea {activePanel} />
     <Viewport />
   </div>
   <StatusBar />

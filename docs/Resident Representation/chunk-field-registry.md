@@ -1,7 +1,12 @@
 # Chunk Field Registry
 
-Explicit classification of every field on a runtime chunk.
-This is the precise contract. [[chunk-contract]] is the narrative explanation.
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
+> Explicit classification of every field on a runtime chunk.
+
+This is the precise contract. [chunk-contract](chunk-contract.md) is the narrative explanation.
 
 ---
 
@@ -199,7 +204,7 @@ One bit per bricklet: 1 if any voxel in that bricklet is occupied, 0 if entirely
 | 2 | `has_emissive` | any entry in `materials.palette` has emissive > 0 |
 | 3–31 | reserved | |
 
-Note: `is_resident` is **not** a bit in `chunk_flags`. It lives in the separate `chunk_resident_flags` buffer, written by the CPU slot director on load/evict. See [[edit-protocol]] — Residency State section.
+Note: `is_resident` is **not** a bit in `chunk_flags`. It lives in the separate `chunk_resident_flags` buffer, written by the CPU slot director on load/evict. See [edit-protocol](edit-protocol.md) — Residency State section.
 
 | Axis | Value | Notes |
 |---|---|---|
@@ -273,7 +278,7 @@ albedo RGB, roughness, emissive RGB, opacity. Scene-scoped, not per-chunk.
 
 Flat pool of all meshlets across all chunk slots. Each entry holds a world-space conservative
 AABB, index range into `meshlet_index_pool`, vertex base into `vertex_pool`, parent chunk
-slot, and `built_from_version`. See [[meshlets]] for full field layout.
+slot, and `built_from_version`. See [meshlets](meshlets.md) for full field layout.
 
 | Axis | Value | Notes |
 |---|---|---|
@@ -359,7 +364,7 @@ iterating meshlets; mismatch triggers chunk-level fallback draw.
 Every non-authoritative field can be dropped and rebuilt from the authoritative set. Caches, meshes, summaries, and flags are all expendable.
 
 **Rule 3 — Traversal must not read `mesh`.**
-`mesh` is a raster surface structure. Traversal queries must read `opaque_mask` and `occupancy_summary`. Reading triangle geometry for ray work conflates Product 1 and Product 2. See [[layer-model]].
+`mesh` is a raster surface structure. Traversal queries must read `opaque_mask` and `occupancy_summary`. Reading triangle geometry for ray work conflates Product 1 and Product 2. See [layer-model](layer-model.md).
 
 **Rule 4 — Culling output must not filter traversal input.**
 `chunk_resident_flags.is_resident` and camera-visibility results from the cull pass must not gate which chunks are queried by A&W or GI. A chunk invisible to the camera may still be hit by a light ray.
@@ -374,7 +379,7 @@ Until GPU-side editing is explicitly implemented, CPU is the write authority for
 
 ## See Also
 
-- [[chunk-contract]] — narrative explanation with edit semantics and residency protocol
-- [[layer-model]] — three-product architecture; why traversal and culling must not share filters
-- [[traversal-acceleration]] — three-level DDA consuming `opaque_mask`, `occupancy_summary`, `chunk_flags`
-- [[gpu-chunk-pool]] — slot allocation, atlas layout, CPU→GPU sync implementation
+- [chunk-contract](chunk-contract.md) — narrative explanation with edit semantics and residency protocol
+- [layer-model](layer-model.md) — three-product architecture; why traversal and culling must not share filters
+- [traversal-acceleration](traversal-acceleration.md) — three-level DDA consuming `opaque_mask`, `occupancy_summary`, `chunk_flags`
+- [gpu-chunk-pool](gpu-chunk-pool.md) — slot allocation, atlas layout, CPU→GPU sync implementation

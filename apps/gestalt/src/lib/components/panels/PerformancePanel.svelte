@@ -1,10 +1,7 @@
 <script lang="ts">
-  import Section from "$lib/components/ui/Section.svelte";
-  import PropRow from "$lib/components/ui/PropRow.svelte";
-  import ActionButton from "$lib/components/ui/ActionButton.svelte";
-  import TimelineCanvas from "$lib/components/ui/TimelineCanvas.svelte";
-  import PassBreakdownTable from "$lib/components/ui/PassBreakdownTable.svelte";
-  import CounterRow from "$lib/components/ui/CounterRow.svelte";
+  import { Section, PropRow, ActionButton, CounterRow } from "@gestalt/phi";
+  import TimelineCanvas from "$lib/components/viz/TimelineCanvas.svelte";
+  import PassBreakdownTable from "$lib/components/viz/PassBreakdownTable.svelte";
   import { frameTimeline, diagCounters, diagHistory } from "$lib/stores/timeline";
   import type { FrameSample, DiagCounters } from "$lib/stores/timeline";
 

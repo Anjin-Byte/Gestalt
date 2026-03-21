@@ -1,7 +1,9 @@
 # 0002 - Module Contract Boundaries
 
-## Status
-Accepted
+**Type:** adr
+**Status:** superseded
+**Superseded by:** [ADR-0012](0012-coop-coep-renderer-worker.md)
+**Date:** 2026-01-11
 
 ## Context
 The test bed must host external WebGPU/WASM modules without coupling to module internals.

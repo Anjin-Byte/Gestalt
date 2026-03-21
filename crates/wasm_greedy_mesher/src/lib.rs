@@ -864,3 +864,88 @@ impl From<ChunkDebugInfo> for WasmChunkDebugInfo {
         }
     }
 }
+
+// ── WASM binding tests ──────────────────────────────────────────────────────
+// Run with: wasm-pack test --headless --chrome crates/wasm_greedy_mesher
+// These tests verify the JS-facing API contract, not the meshing algorithm
+// itself (which is covered by cargo test in crates/greedy_mesher).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    // ── mesh_dense_voxels ───────────────────────────────────────────────────
+
+    #[wasm_bindgen_test]
+    fn empty_voxel_grid_produces_empty_mesh() {
+        // All-zero voxels = all air = nothing to mesh.
+        let voxels = vec![0u16; 8 * 8 * 8];
+        let result = mesh_dense_voxels(&voxels, 8, 8, 8, 1.0, 0.0, 0.0, 0.0, false);
+        assert!(result.is_empty(), "empty voxel grid should produce no geometry");
+        assert_eq!(result.vertex_count(), 0);
+        assert_eq!(result.triangle_count(), 0);
+    }
+
+    #[wasm_bindgen_test]
+    fn solid_voxel_grid_produces_geometry() {
+        // All-solid 4³ block — outer faces form a cube: 6 faces × 2 triangles = 12 triangles.
+        let voxels = vec![1u16; 4 * 4 * 4];
+        let result = mesh_dense_voxels(&voxels, 4, 4, 4, 1.0, 0.0, 0.0, 0.0, false);
+        assert!(!result.is_empty(), "solid block must produce geometry");
+        assert!(result.vertex_count() > 0);
+        assert!(result.triangle_count() > 0);
+        // Positions are 3 floats per vertex.
+        assert_eq!(result.positions().len(), result.vertex_count() * 3);
+        // Normals are 3 floats per vertex.
+        assert_eq!(result.normals().len(), result.vertex_count() * 3);
+        // Indices are 3 per triangle.
+        assert_eq!(result.indices().len(), result.triangle_count() * 3);
+    }
+
+    #[wasm_bindgen_test]
+    fn single_voxel_produces_six_faces() {
+        // A single solid voxel at the origin should mesh all 6 faces.
+        let mut voxels = vec![0u16; 4 * 4 * 4];
+        voxels[0] = 1; // solid voxel at (0,0,0)
+        let result = mesh_dense_voxels(&voxels, 4, 4, 4, 1.0, 0.0, 0.0, 0.0, false);
+        // 6 faces × 2 triangles per face = 12 triangles minimum.
+        assert_eq!(result.triangle_count(), 12, "single voxel should have 12 triangles");
+    }
+
+    #[wasm_bindgen_test]
+    fn uv_generation_populates_uv_array() {
+        let voxels = vec![1u16; 4 * 4 * 4];
+        let result = mesh_dense_voxels(&voxels, 4, 4, 4, 1.0, 0.0, 0.0, 0.0, true);
+        assert!(result.has_uvs(), "UVs should be present when generate_uvs=true");
+        assert_eq!(result.uvs().len(), result.vertex_count() * 2);
+    }
+
+    #[wasm_bindgen_test]
+    fn no_uvs_when_not_requested() {
+        let voxels = vec![1u16; 4 * 4 * 4];
+        let result = mesh_dense_voxels(&voxels, 4, 4, 4, 1.0, 0.0, 0.0, 0.0, false);
+        assert!(!result.has_uvs(), "UVs should be absent when generate_uvs=false");
+        assert_eq!(result.uvs().len(), 0);
+    }
+
+    // ── mesh_voxel_positions ────────────────────────────────────────────────
+
+    #[wasm_bindgen_test]
+    fn position_list_empty_produces_empty_mesh() {
+        let positions: Vec<f32> = vec![];
+        let result = mesh_voxel_positions(&positions, 1.0, 0.0, 0.0, 0.0);
+        assert!(result.is_empty());
+    }
+
+    #[wasm_bindgen_test]
+    fn single_voxel_position_produces_geometry() {
+        // One voxel at world position (0, 0, 0).
+        let positions = vec![0.0f32, 0.0, 0.0];
+        let result = mesh_voxel_positions(&positions, 1.0, 0.0, 0.0, 0.0);
+        assert!(!result.is_empty());
+        assert!(result.vertex_count() > 0);
+    }
+}

@@ -1,5 +1,9 @@
 # Edit Protocol
 
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
 How voxel edits flow through the GPU-resident runtime without making derived structures haunted.
 
 The GPU world is authoritative for **contents**. The CPU retains authority for **orchestration**.
@@ -399,8 +403,8 @@ All of that happens downstream of the edit kernel.
 
 ## See Also
 
-- [[chunk-field-registry]] — authoritative field definitions; version field spec
-- [[chunk-contract]] — edit semantics (CPU-side), boundary propagation rules
-- [[extension-seams]] — why derived data is never edited directly (Invariant, the database analogy)
-- [[gpu-chunk-pool]] — slot allocation; how `slot` indices map to world chunks
-- [[pipeline-stages]] — where edit kernels and rebuild passes sit in the frame
+- [chunk-field-registry](chunk-field-registry.md) — authoritative field definitions; version field spec
+- [chunk-contract](chunk-contract.md) — edit semantics (CPU-side), boundary propagation rules
+- [extension-seams](extension-seams.md) — why derived data is never edited directly (Invariant, the database analogy)
+- [gpu-chunk-pool](gpu-chunk-pool.md) — slot allocation; how `slot` indices map to world chunks
+- [pipeline-stages](pipeline-stages.md) — where edit kernels and rebuild passes sit in the frame

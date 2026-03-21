@@ -1,5 +1,9 @@
 # Development Guidelines
 
+**Type:** reference
+**Status:** current
+**Date:** 2026-03-21
+
 > **Part of the Voxel Mesh Architecture**
 >
 > Coding standards and organizational principles for the voxel mesh system.

@@ -1,8 +1,9 @@
 # ADR-0009: GPU-Compact Voxelizer Integration (Architecture B)
 
-Date: February 22, 2026
-Status: **Accepted**
-Supersedes: `docs/greedy-meshing-docs/adr/0005-voxelizer-to-mesher-integration.md`
+**Type:** adr
+**Status:** accepted
+**Supersedes:** [ADR-0005](0005-voxelizer-to-mesher-integration.md)
+**Date:** 2026-02-22
 
 ---
 

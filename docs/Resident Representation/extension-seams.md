@@ -1,5 +1,9 @@
 # Extension Seams
 
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
 How future features integrate with the canonical voxel runtime without becoming bolt-ons.
 
 This document is the architectural principles layer. Before any new system is designed, run it through this framework first.
@@ -64,7 +68,7 @@ That is the whole game.
 For any proposed feature, answer three questions in order:
 
 **1. Is it authoritative world truth?**
-If yes, be extremely reluctant. The set of authoritative fields is small by design. Growing it adds constraints on every producer, every consumer, and every migration path. See [[chunk-field-registry]].
+If yes, be extremely reluctant. The set of authoritative fields is small by design. Growing it adds constraints on every producer, every consumer, and every migration path. See [chunk-field-registry](chunk-field-registry.md).
 
 **2. Is it a derived acceleration layer?**
 If yes, it is probably fine. Derived structures can be added, discarded, rebuilt, and version-gated without touching the core contract.
@@ -154,7 +158,7 @@ These are the warning signs that a feature has entered the wrong layer.
 | "All producers must emit my special hierarchy." | Violates Invariant 5. Feature is colonizing the producer interface. |
 | "World truth should become camera-relative." | Violates Invariant 6. View-dependent structure is trying to become authoritative. |
 | "Mesh buffers should be authoritative." | Violates Invariant 6. Layer 4 artifact demanding Layer 1 status. |
-| "Hi-Z should filter which chunks traversal queries." | Mixes Product 3 (camera-visibility) with Product 1 (world-space ray work). See [[layer-model]]. |
+| "Hi-Z should filter which chunks traversal queries." | Mixes Product 3 (camera-visibility) with Product 1 (world-space ray work). See [layer-model](layer-model.md). |
 | "Every edit must synchronously update my acceleration structure." | Violates Invariant 2. Feature is taking a global dependency on dirty state. |
 | "CompactVoxel[] is the stable API between systems." | See below. |
 
@@ -243,7 +247,7 @@ Hi-Z is derived from raster depth. It tells you what the *camera* sees this fram
 - Rebuild priority
 - Debug / profiling feedback
 
-Hi-Z must not gate which chunks are resident, which chunks are traversed by rays, or how chunks are stored. See [[layer-model]] for why camera-visibility and ray-relevance are orthogonal.
+Hi-Z must not gate which chunks are resident, which chunks are traversed by rays, or how chunks are stored. See [layer-model](layer-model.md) for why camera-visibility and ray-relevance are orthogonal.
 
 ---
 
@@ -305,7 +309,7 @@ Those five attachment points are enough for most imaginable extensions. If a pro
 
 ## See Also
 
-- [[chunk-field-registry]] — explicit classification of every current field
-- [[layer-model]] — the three-product architecture (world-space / surface / camera-visibility)
-- [[chunk-contract]] — edit semantics, residency protocol, and what gets invalidated on edit
-- [[traversal-acceleration]] — Layer 3 query contract (`traceFirstHit`, `traceSegments`)
+- [chunk-field-registry](chunk-field-registry.md) — explicit classification of every current field
+- [layer-model](layer-model.md) — the three-product architecture (world-space / surface / camera-visibility)
+- [chunk-contract](chunk-contract.md) — edit semantics, residency protocol, and what gets invalidated on edit
+- [traversal-acceleration](traversal-acceleration.md) — Layer 3 query contract (`traceFirstHit`, `traceSegments`)

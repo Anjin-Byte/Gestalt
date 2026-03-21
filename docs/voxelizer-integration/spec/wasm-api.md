@@ -1,7 +1,8 @@
 # WASM API and Worker Protocol
 
-Date: February 22, 2026
-Status: Authoritative
+**Type:** spec
+**Status:** stale
+**Date:** 2026-02-22
 
 Source: Refined from `archive/voxelizer-greedy-integration-spec.md` §§3.1–3.5.
 Internal execution flow updated for Architecture B (GPU outputs `CompactVoxel[]`

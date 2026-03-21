@@ -1,3 +1,6 @@
+**Type:** legacy
+**Status:** legacy
+
 > **SUPERSEDED** — This document has been reorganized into `docs/voxelizer-integration/`.
 > Content preserved in: `design/requirements.md`, `design/gpu-output-contract.md`, `design/cpu-ingestion.md`.
 > This file is retained as a historical record. Do not implement from it.
@@ -6,7 +9,7 @@
 
 # Voxelizer Chunk-Native Output: Design Requirements
 
-Date: February 21, 2026
+**Date:** 2026-02-21
 Status: Design — pre-implementation
 
 ---

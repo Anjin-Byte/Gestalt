@@ -16,9 +16,9 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@gestalt/modules": ["../../packages/modules/src/index.ts"],
+      "@gestalt/phi": ["../../packages/phi/src/index.ts"],
       "@gestalt/voxelizer-js": ["../../packages/voxelizer-js/src/index.ts"],
-      "@web/*": ["../../apps/web/src/*"],
+      "@web/*": ["../../legacy/apps/web/src/*"],
       "$lib": ["./src/lib"],
       "$lib/*": ["./src/lib/*"]
     }

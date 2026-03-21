@@ -1,7 +1,8 @@
 # 0004 - 64³ Chunk Size
 
-## Status
-Accepted
+**Type:** adr
+**Status:** accepted
+**Date:** 2026-02-03
 
 ## Context
 

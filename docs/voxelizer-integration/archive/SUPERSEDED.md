@@ -1,6 +1,8 @@
 # Superseded Documents
 
-Date: February 22, 2026
+**Type:** legacy
+**Status:** legacy
+**Date:** 2026-02-22
 
 ---
 

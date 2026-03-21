@@ -1,10 +1,14 @@
 # Debug, Profiling, and Testing
 
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
 GPU timing infrastructure, internal state visibility, diagnostic counters,
 and the testing strategy for a GPU-resident architecture where shaders are
 outside the reach of `cargo test`.
 
-Related: [[pipeline-stages]], [[edit-protocol]], [[gpu-chunk-pool]].
+Related: [pipeline-stages](pipeline-stages.md), [edit-protocol](edit-protocol.md), [gpu-chunk-pool](gpu-chunk-pool.md).
 
 ---
 
@@ -516,7 +520,7 @@ shader tests → Tier 3 protocol tests.
 
 ## See Also
 
-- [[pipeline-stages]] — pass sequence and buffer ownership; one timestamp pair per stage
-- [[edit-protocol]] — protocol invariants tested in Tier 3; `queue_counts` readback timing
-- [[gpu-chunk-pool]] — slot lifecycle invariants tested in Tier 3
-- [[extension-seams]] — architectural integration test concept; Tier 3 tests formalize this
+- [pipeline-stages](pipeline-stages.md) — pass sequence and buffer ownership; one timestamp pair per stage
+- [edit-protocol](edit-protocol.md) — protocol invariants tested in Tier 3; `queue_counts` readback timing
+- [gpu-chunk-pool](gpu-chunk-pool.md) — slot lifecycle invariants tested in Tier 3
+- [extension-seams](extension-seams.md) — architectural integration test concept; Tier 3 tests formalize this

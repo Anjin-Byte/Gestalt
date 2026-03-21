@@ -1,3 +1,6 @@
+**Type:** legacy
+**Status:** legacy
+
 > **SUPERSEDED** — This document contains an Architecture A implementation plan (§4) that is not used.
 > The MAT-REQ requirements (§3) and material pipeline analysis remain valuable.
 > Content preserved in: `design/requirements.md` (MAT-REQ-01 through MAT-REQ-14), `spec/material-pipeline.md`.
@@ -7,7 +10,7 @@
 
 # Voxelizer Materials: Current State, Requirements, and Architecture Update Plan
 
-Date: February 20, 2026
+**Date:** 2026-02-20
 Status: Proposed report
 Audience: Voxelizer, greedy-mesher, worker/runtime maintainers
 

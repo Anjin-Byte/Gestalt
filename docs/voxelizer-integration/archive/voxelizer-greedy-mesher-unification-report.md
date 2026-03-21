@@ -1,3 +1,6 @@
+**Type:** legacy
+**Status:** legacy
+
 > **SUPERSEDED** — This document is a historical problem-space framing from before Architecture B was decided.
 > The architectural principle it established is now the foundation of the integration.
 > Content preserved in: `philosophy.md` (canonical store principle, architectural direction).
@@ -7,7 +10,7 @@
 
 # Voxelizer + Greedy Mesher Unification Report (Draft v0)
 
-Date: February 19, 2026
+**Date:** 2026-02-19
 Status: Initial draft ("beginnings" report)
 Audience: Rendering/engine architecture and module maintainers
 

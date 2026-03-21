@@ -1,3 +1,6 @@
+**Type:** legacy
+**Status:** legacy
+
 > **SUPERSEDED** — This document implements Architecture A (CPU-side occupancy scan and material lookup).
 > Architecture B (GPU-compact) is the current design. See `docs/voxelizer-integration/`.
 > Content preserved in: `impl/gpu-shader-changes.md`, `impl/greedy-voxelizer-crate.md`, `impl/wasm-bindings.md`, `impl/overview.md`.
@@ -7,7 +10,7 @@
 
 # Voxelizer → Greedy Mesh Integration: Implementation Plan
 
-Date: February 21, 2026
+**Date:** 2026-02-21
 Status: Ready to implement
 
 ---

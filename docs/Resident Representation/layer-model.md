@@ -1,5 +1,9 @@
 # Layer Model: Three Products from One Voxel Truth
 
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
 The renderer needs three distinct products, not one. They share a common source but answer different questions and must not be conflated.
 
 ---
@@ -77,7 +81,7 @@ Product 3 (visibility) feeds back only into Product 2 dispatch. It does not cons
 
 ## The Canonical Structure in Detail
 
-See [[chunk-contract]] for the full field-level specification. Summary:
+See [chunk-contract](chunk-contract.md) for the full field-level specification. Summary:
 
 **Authoritative (source of truth, never derived):**
 - `opaque_mask` — binary voxel occupancy, per chunk
@@ -132,7 +136,7 @@ The occupancy hierarchy (chunk DDA → sub-brick DDA → voxel DDA) is the corre
 
 ## Traversal Hierarchy for Product 1
 
-A&W traversal over world-space chunk occupancy should proceed in three levels. See [[traversal-acceleration]] for full design.
+A&W traversal over world-space chunk occupancy should proceed in three levels. See [traversal-acceleration](traversal-acceleration.md) for full design.
 
 ```
 Level 0 — Chunk DDA
@@ -165,13 +169,13 @@ Sannikov's world-space probe variant uses a 3D regular grid of probes with voxel
 
 The hybrid screenspace variant (ADR-0010, Option C) places probes on the depth buffer surface (Product 2 output) but marches rays through world-space occupancy (Product 1). That is the correct use of the split — probe *placement* is screen-driven, probe *evaluation* is world-space.
 
-See [[../greedy-meshing-docs/adr/0010-radiance-cascades]] for the full decision.
+See [ADR-0010](../adr/0010-radiance-cascades.md) for the full decision.
 
 ---
 
 ## See Also
 
-- [[chunk-contract]] — canonical chunk field specification
-- [[traversal-acceleration]] — multi-level DDA design
-- [[pipeline-stages]] — GPU stage diagram with exact buffers and read/write ownership
-- [[../gpu-driven-rendering/INDEX]] — ADR-0011 hybrid pipeline (Product 2 + 3 implementation)
+- [chunk-contract](chunk-contract.md) — canonical chunk field specification
+- [traversal-acceleration](traversal-acceleration.md) — multi-level DDA design
+- [pipeline-stages](pipeline-stages.md) — GPU stage diagram with exact buffers and read/write ownership
+- [gpu-driven-rendering INDEX](../legacy/gpu-driven-rendering/INDEX.md) — ADR-0011 hybrid pipeline (Product 2 + 3 implementation)

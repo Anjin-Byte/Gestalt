@@ -1,7 +1,8 @@
 # CPU Ingestion Contract
 
-Date: February 22, 2026
-Status: Authoritative
+**Type:** spec
+**Status:** proposed
+**Date:** 2026-02-22
 
 Sources: `archive/voxelizer-chunk-native-output-design-requirements.md` §CPU Ingestion;
 `archive/voxelizer-greedy-integration-spec.md` §§6, 10

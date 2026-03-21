@@ -1,3 +1,6 @@
+**Type:** legacy
+**Status:** legacy
+
 > **SUPERSEDED** — This document's authority hierarchy and navigation links are outdated.
 > The current authoritative navigation hub is `docs/voxelizer-integration/INDEX.md`.
 > This file is retained as a historical record only.
@@ -6,7 +9,7 @@
 
 # Voxelizer + Greedy Program Map
 
-Date: February 20, 2026
+**Date:** 2026-02-20
 Status: Active navigation + traceability hub
 Audience: Engineers implementing voxelizer->greedy integration and related rendering systems
 

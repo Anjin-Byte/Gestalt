@@ -1,3 +1,6 @@
+**Type:** legacy
+**Status:** legacy
+
 > **SUPERSEDED** — This document proposes Architecture A migration phases and a `VoxelizerChunkDeltaBatch` wire format
 > that is not used in Architecture B. Architecture B is the current design. See `docs/voxelizer-integration/`.
 > Project goals and success criteria preserved in: `design/requirements.md`, `adr/0009-architecture-b.md`.
@@ -7,7 +10,7 @@
 
 # Voxelizer -> Greedy-Native Migration Outline
 
-Date: February 20, 2026
+**Date:** 2026-02-20
 Status: Proposed outline
 Audience: Voxelizer, WASM bindings, worker/runtime, and greedy-mesher maintainers
 

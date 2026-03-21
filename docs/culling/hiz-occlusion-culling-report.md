@@ -1,6 +1,6 @@
 # Hi-Z Occlusion Culling Readiness Report (Greedy-Mesh Target)
 
-Date: February 19, 2026  
+**Date:** 2026-02-19
 Repository: `Gestalt`  
 Scope: Depth source + occludee bounds + chunk granularity for Hierarchical Z-Buffer (Hi-Z), targeting the greedy-mesh module rendering path as the universal future approach
 
@@ -9,10 +9,10 @@ Scope: Depth source + occludee bounds + chunk granularity for Hierarchical Z-Buf
 1. Type: Prescriptive adjunct (render/culling integration constraints).
 2. Primary use: Define what backend/runtime data is required for Hi-Z on greedy chunk rendering.
 3. Upstream architecture docs:
-   - `docs/greedy-meshing-docs/voxelizer-greedy-native-migration-outline.md`
-   - `docs/greedy-meshing-docs/voxelizer-greedy-mesher-unification-report.md`
+   - `docs/voxelizer-integration/archive/voxelizer-greedy-native-migration-outline.md`
+   - `docs/voxelizer-integration/archive/voxelizer-greedy-mesher-unification-report.md`
 4. Navigation hub:
-   - `docs/greedy-meshing-docs/voxelizer-greedy-program-map.md`
+   - `docs/voxelizer-integration/archive/voxelizer-greedy-program-map.md`
 
 ## 1. Executive Summary
 
@@ -23,7 +23,7 @@ This codebase already has enough upstream spatial structure to support practical
 
 Targeting clarification:
 
-1. The long-term and universal target is greedy-meshed chunk rendering (`docs/greedy-meshing-docs/voxel-mesh-architecture.md`).
+1. The long-term and universal target is greedy-meshed chunk rendering (`docs/legacy/greedy-meshing-docs/voxel-mesh-architecture.md`).
 2. Current concrete runtime evidence in this repository still comes from the active voxel/instanced path (`apps/web/src/viewer/outputs.ts`, `apps/web/src/modules/wasmVoxelizer/runCore.ts`).
 3. This report treats the current path as transitional and maps it to the greedy-mesh target design.
 
@@ -49,9 +49,9 @@ This report addresses the three requested statements in detail:
 
 The intended production target is the greedy-mesh chunk pipeline, not per-voxel instancing:
 
-1. Architecture direction: `docs/greedy-meshing-docs/voxel-mesh-architecture.md`.
-2. Chunk lifecycle/ownership: `docs/greedy-meshing-docs/module-system-lifecycle.md`.
-3. Chunk render object strategy (stable mesh objects / geometry swaps): `docs/greedy-meshing-docs/threejs-buffer-management.md`.
+1. Architecture direction: `docs/legacy/greedy-meshing-docs/voxel-mesh-architecture.md`.
+2. Chunk lifecycle/ownership: `docs/legacy/greedy-meshing-docs/module-system-lifecycle.md`.
+3. Chunk render object strategy (stable mesh objects / geometry swaps): `docs/legacy/greedy-meshing-docs/threejs-buffer-management.md`.
 
 For Hi-Z, this means cull units should be chunk mesh units (or chunk-subclusters), with optional brick-level bridging during migration.
 
@@ -196,9 +196,9 @@ Hi-Z should be modeled around chunk mesh rendering, not voxel instance rendering
 
 Alignment with existing design docs:
 
-1. Stable render objects and geometry swaps are already defined in `docs/greedy-meshing-docs/threejs-buffer-management.md`.
-2. Chunk lifecycle and ownership are defined in `docs/greedy-meshing-docs/module-system-lifecycle.md`.
-3. Chunk-first architecture is defined in `docs/greedy-meshing-docs/voxel-mesh-architecture.md`.
+1. Stable render objects and geometry swaps are already defined in `docs/legacy/greedy-meshing-docs/threejs-buffer-management.md`.
+2. Chunk lifecycle and ownership are defined in `docs/legacy/greedy-meshing-docs/module-system-lifecycle.md`.
+3. Chunk-first architecture is defined in `docs/legacy/greedy-meshing-docs/voxel-mesh-architecture.md`.
 
 Implication:
 

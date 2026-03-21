@@ -6,6 +6,64 @@ on:
     branches: [main]
 
 jobs:
+  phi-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install
+        run: pnpm install
+
+      - name: Run Phi unit tests
+        run: pnpm -C packages/phi test
+
+  cargo-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run cargo tests
+        run: cargo test --workspace
+
+  wasm-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install Playwright Chrome (for wasm-bindgen-test)
+        run: npx --yes playwright install chromium --with-deps
+
+      - name: Run wasm-bindgen tests
+        run: wasm-pack test --headless --chrome crates/wasm_greedy_mesher
+
   playwright:
     runs-on: ubuntu-latest
     steps:
@@ -16,7 +74,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: "pnpm"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -27,7 +84,7 @@ jobs:
         run: pnpm install
 
       - name: Install Playwright browsers
-        run: pnpm -C apps/web playwright install --with-deps
+        run: pnpm -C apps/gestalt playwright install --with-deps
 
       - name: Run Playwright tests
-        run: pnpm -C apps/web test:e2e
+        run: pnpm -C apps/gestalt test:e2e

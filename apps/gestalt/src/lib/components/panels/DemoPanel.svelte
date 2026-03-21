@@ -1,17 +1,11 @@
 <script lang="ts">
-  import Section from "$lib/components/ui/Section.svelte";
-  import PropRow from "$lib/components/ui/PropRow.svelte";
-  import ScrubField from "$lib/components/ui/ScrubField.svelte";
-  import SelectField from "$lib/components/ui/SelectField.svelte";
-  import CheckboxRow from "$lib/components/ui/CheckboxRow.svelte";
-  import ActionButton from "$lib/components/ui/ActionButton.svelte";
-  import StatusIndicator from "$lib/components/ui/StatusIndicator.svelte";
-  import BarMeter from "$lib/components/ui/BarMeter.svelte";
-  import ToggleGroup from "$lib/components/ui/ToggleGroup.svelte";
-  import TimelineCanvas from "$lib/components/ui/TimelineCanvas.svelte";
-  import PassBreakdownTable from "$lib/components/ui/PassBreakdownTable.svelte";
-  import CounterRow from "$lib/components/ui/CounterRow.svelte";
-  import Sparkline from "$lib/components/ui/Sparkline.svelte";
+  import {
+    Section, PropRow, ScrubField, SelectField, CheckboxRow,
+    ActionButton, StatusIndicator, BarMeter, ToggleGroup,
+    CounterRow, Sparkline,
+  } from "@gestalt/phi";
+  import TimelineCanvas from "$lib/components/viz/TimelineCanvas.svelte";
+  import PassBreakdownTable from "$lib/components/viz/PassBreakdownTable.svelte";
   import type { FrameSample } from "$lib/stores/timeline";
 
   const selectOptions = [

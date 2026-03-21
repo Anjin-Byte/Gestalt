@@ -1,7 +1,12 @@
 # GPU-First Pipeline Stage Diagram
 
-Exact buffers, textures, and read/write ownership per stage.
-Derived from [[layer-model]] — three products from one voxel truth.
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
+> Exact buffers, textures, and read/write ownership per stage.
+
+Derived from [layer-model](layer-model.md) — three products from one voxel truth.
 
 ---
 
@@ -69,7 +74,7 @@ Reads `CompactVoxel[]` on CPU. For each voxel, writes into the GPU chunk pool:
 
 Owner: CPU (Web Worker, Rust ChunkManager). Upload via `writeBuffer` or mapped staging buffer.
 
-After upload, CPU sets `chunk_resident_flags[slot].is_resident = 1` and sets the `stale_summary` control-plane bit for this slot. The GPU compaction pass then enqueues the slot into `summary_rebuild_queue` (see [[edit-protocol]] — CPU must not write queues directly).
+After upload, CPU sets `chunk_resident_flags[slot].is_resident = 1` and sets the `stale_summary` control-plane bit for this slot. The GPU compaction pass then enqueues the slot into `summary_rebuild_queue` (see [edit-protocol](edit-protocol.md) — CPU must not write queues directly).
 
 ---
 
@@ -99,7 +104,7 @@ After this stage, the `stale_summary` control-plane bit for the chunk is cleared
 
 Not a GPU compute stage currently — runs on CPU (Rust, Web Worker). Reads `opaque_mask` from CPU-mirrored chunk data, emits `ChunkMeshTransfer`.
 
-Future target: GPU compute reading `chunk_occupancy_atlas`, writing into `vertex_pool` and `index_pool` directly. See [[gpu-chunk-pool]].
+Future target: GPU compute reading `chunk_occupancy_atlas`, writing into `vertex_pool` and `index_pool` directly. See [gpu-chunk-pool](gpu-chunk-pool.md).
 
 | Buffer | Direction | Format | Notes |
 |---|---|---|---|
@@ -147,7 +152,7 @@ Owner: GPU compute. One dispatch per mip level (or single pass with shared memor
 
 Two-phase dispatch. Phase 1 culls at chunk AABB granularity and writes a visible-chunk list.
 Phase 2 culls at meshlet AABB granularity (indirect dispatch over the visible-chunk list) and
-writes the final indirect draw arguments. See [[meshlets]] for full pseudocode and fallback behavior.
+writes the final indirect draw arguments. See [meshlets](meshlets.md) for full pseudocode and fallback behavior.
 
 **Phase 1 — Chunk Coarse Cull**
 
@@ -302,7 +307,7 @@ Three.js does not render chunk geometry. It reads the same depth buffer to corre
 
 ## See Also
 
-- [[chunk-contract]] — canonical chunk field specification
-- [[layer-model]] — three-product architecture and the canonical source
-- [[traversal-acceleration]] — three-level DDA design for Stage R-6
-- [[gpu-chunk-pool]] — slot allocation, atlas layout, residency management
+- [chunk-contract](chunk-contract.md) — canonical chunk field specification
+- [layer-model](layer-model.md) — three-product architecture and the canonical source
+- [traversal-acceleration](traversal-acceleration.md) — three-level DDA design for Stage R-6
+- [gpu-chunk-pool](gpu-chunk-pool.md) — slot allocation, atlas layout, residency management

@@ -1,7 +1,8 @@
 # Voxelizer Integration — Documentation Index
 
-Date: February 22, 2026
-Status: Authoritative
+**Type:** reference
+**Status:** stale
+**Date:** 2026-02-22
 
 ---
 
@@ -15,7 +16,7 @@ directly into the chunk manager's canonical voxel store.
 
 This section does **not** cover the greedy meshing algorithm itself, chunk
 management lifecycle, Three.js buffer management, or LOD strategy. Those topics
-are documented in [`docs/greedy-meshing-docs/`](../greedy-meshing-docs/INDEX.md).
+are documented in [`docs/legacy/greedy-meshing-docs/`](../legacy/greedy-meshing-docs/INDEX.md).
 
 ---
 
@@ -26,7 +27,7 @@ When documents disagree, the following precedence applies:
 | Priority | Document | Scope |
 |----------|----------|-------|
 | 1 | This section (all docs) | Voxelizer integration — all topics |
-| 2 | `docs/greedy-meshing-docs/` ADRs 0001-0004, 0006-0008 | Greedy meshing system |
+| 2 | `docs/adr/` ADRs 0001-0004, 0006-0008 | Greedy meshing system |
 | 3 | `archive/` docs | Historical context only — do not implement from these |
 
 Within this section, `design/` documents define requirements (what must be true).

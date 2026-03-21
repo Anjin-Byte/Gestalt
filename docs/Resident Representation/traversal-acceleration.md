@@ -1,9 +1,13 @@
 # Traversal Acceleration
 
+**Type:** spec
+**Status:** current
+**Date:** 2026-03-21
+
 Design for world-space ray traversal over the canonical chunk occupancy structure.
 Consumed by A&W inner loops, GI probe rays, radiance cascade interval queries, picking, and shadow tests.
 
-Related: [[layer-model]] (Product 1), [[chunk-field-registry]] (fields used), [[pipeline-stages]] (Stage R-6).
+Related: [layer-model](layer-model.md) (Product 1), [chunk-field-registry](chunk-field-registry.md) (fields used), [pipeline-stages](pipeline-stages.md) (Stage R-6).
 
 ---
 
@@ -125,7 +129,7 @@ Level 1: Voxel DDA (inside chunk)
 Chunk DDA uses the same A&W formulation as voxel DDA — the algorithm is nested, not replaced.
 
 **Future extension — Level 0.5 (bricklet DDA):**
-Once `occupancy_summary` is implemented (see [[chunk-field-registry]]), add a level between chunk and voxel that tests 8³ bricklet bits before descending to per-voxel. This gives three nested levels:
+Once `occupancy_summary` is implemented (see [chunk-field-registry](chunk-field-registry.md)), add a level between chunk and voxel that tests 8³ bricklet bits before descending to per-voxel. This gives three nested levels:
 
 ```
 Chunk DDA → Bricklet DDA → Voxel DDA
@@ -179,7 +183,7 @@ In both modes, material data is only fetched after the occupancy bit confirms a 
 
 Hi-Z is for the raster side. For ray traversal, the right prefilter is chunk-space facts — not camera visibility.
 
-The summaries that help traversal are in `chunk_flags` (see [[chunk-field-registry]]):
+The summaries that help traversal are in `chunk_flags` (see [chunk-field-registry](chunk-field-registry.md)):
 
 | Flag | Ray traversal use |
 |---|---|
@@ -281,7 +285,7 @@ The build order is: `chunk_flags` → Level 0 DDA → Level 1 DDA → `traceFirs
 
 ## See Also
 
-- [[chunk-field-registry]] — fields consumed by traversal (`opaque_mask`, `chunk_flags`, `occupancy_summary`)
-- [[layer-model]] — why traversal (Product 1) must not be filtered by camera-visibility (Product 3)
-- [[pipeline-stages]] — Stage R-6 (radiance cascade build) is the first consumer of `traceSegments`
-- [[../woo/Amanatides_and_Woo]] — DDA algorithm reference
+- [chunk-field-registry](chunk-field-registry.md) — fields consumed by traversal (`opaque_mask`, `chunk_flags`, `occupancy_summary`)
+- [layer-model](layer-model.md) — why traversal (Product 1) must not be filtered by camera-visibility (Product 3)
+- [pipeline-stages](pipeline-stages.md) — Stage R-6 (radiance cascade build) is the first consumer of `traceSegments`
+- [Amanatides & Woo](../research/woo/Amanatides_and_Woo.md) — DDA algorithm reference

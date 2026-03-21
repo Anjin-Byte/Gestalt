@@ -17,6 +17,9 @@ bytemuck = { version = "1.16", features = ["derive"] }
 version = "0.3"
 features = ["console"]
 
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
 [profile.release]
 opt-level = "z"
 lto = true

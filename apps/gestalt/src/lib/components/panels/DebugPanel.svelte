@@ -1,11 +1,7 @@
 <script lang="ts">
   import { backendStore } from "$lib/stores/viewer";
   import { requestGpuDevice } from "$lib/utils/gpu";
-  import Section from "$lib/components/ui/Section.svelte";
-  import PropRow from "$lib/components/ui/PropRow.svelte";
-  import ScrubField from "$lib/components/ui/ScrubField.svelte";
-  import SelectField from "$lib/components/ui/SelectField.svelte";
-  import CheckboxRow from "$lib/components/ui/CheckboxRow.svelte";
+  import { Section, PropRow, ScrubField, SelectField, CheckboxRow } from "@gestalt/phi";
 
   const rendererOptions = [
     { value: "auto",   label: "Auto" },

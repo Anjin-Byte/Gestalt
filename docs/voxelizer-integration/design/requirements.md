@@ -1,7 +1,8 @@
 # Integration Requirements
 
-Date: February 22, 2026
-Status: Authoritative
+**Type:** spec
+**Status:** stale
+**Date:** 2026-02-22
 
 Consolidated from:
 - `archive/voxelizer-chunk-native-output-design-requirements.md`

@@ -1,6 +1,8 @@
 # Target Frame Pipeline Architecture
 
-Date: March 9, 2026
+**Type:** legacy
+**Status:** legacy
+**Date:** 2026-03-09
 
 ---
 
@@ -72,7 +74,7 @@ continue to render through Three.js as a final overlay pass.
 │   4c: Merge cascades back-to-front (Eq. 13 of Sannikov):       │
 │       L_merged = L_i + β_i × L_(i+1)                           │
 │                                                                 │
-│   Ref: docs/greedy-meshing-docs/adr/0010-radiance-cascades.md   │
+│   Ref: docs/adr/0010-radiance-cascades.md                        │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
                       ▼
@@ -250,5 +252,5 @@ This leaves significant headroom for other work (meshing, voxelization, UI).
 - [`hybrid-transition.md`](hybrid-transition.md) — incremental migration plan
 - [`../spec/frame-graph.md`](../spec/frame-graph.md) — formal pass ordering and resource dependencies
 - [`../spec/visibility-buffer.md`](../spec/visibility-buffer.md) — meshlet and visibility buffer design
-- [`../../greedy-meshing-docs/adr/0010-radiance-cascades.md`](../../greedy-meshing-docs/adr/0010-radiance-cascades.md) — Pass 4 design
+- [`../../../adr/0010-radiance-cascades.md`](../../../adr/0010-radiance-cascades.md) — Pass 4 design
 - [`../../culling/hiz-occlusion-culling-report.md`](../../culling/hiz-occlusion-culling-report.md) — Pass 2-3 design
