@@ -6,7 +6,8 @@
 
 import "./style.css";
 import { createDefaultModules } from "./modules/registry";
-import { ModuleHost } from "./modules/moduleHost";
+import { ModuleHost } from "@gestalt/modules";
+import { createUiApi } from "./ui/uiApi";
 import { createThreeBackend } from "./viewer/threeBackend";
 import { Viewer } from "./viewer/Viewer";
 import { initDebugOverlay } from "./ui/debugOverlay";
@@ -207,7 +208,9 @@ const app = async () => {
   settingsBody.appendChild(moduleSection);
 
   const modules = createDefaultModules();
-  const host = new ModuleHost(modules, moduleControls, ctx, (outputs) => {
+  let host: ModuleHost;
+  const uiApi = createUiApi(moduleControls, () => host?.scheduleRun());
+  host = new ModuleHost(modules, uiApi, ctx, (outputs) => {
     viewer.setOutputs(outputs);
     if (testMode) viewer.render();
   });

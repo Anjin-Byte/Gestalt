@@ -1,0 +1,208 @@
+{
+  "main": {
+    "id": "0b77945f0109817a",
+    "type": "split",
+    "children": [
+      {
+        "id": "c933195fda56f87e",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "511396d286008bdc",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "ui-design-system.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "ui-design-system"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "ff97fec618ca2267",
+    "type": "split",
+    "children": [
+      {
+        "id": "5bb38a3670b6146a",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "c627282199e52a0d",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "b444dca2e5913e76",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "93fb5ea6a1e347b2",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 266.5
+  },
+  "right": {
+    "id": "a424d8677d4e6445",
+    "type": "split",
+    "children": [
+      {
+        "id": "68967b88a6465fc2",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "799fef14aca922ab",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "ui-design-system.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for ui-design-system"
+            }
+          },
+          {
+            "id": "7e4bfe08a5077f52",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "ui-design-system.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from ui-design-system"
+            }
+          },
+          {
+            "id": "596588d1ccbed031",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "a0bb6aa70d560954",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "97d0ff20d72075c0",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "ui-design-system.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of ui-design-system"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "511396d286008bdc",
+  "lastOpenFiles": [
+    "ui-interaction-design.md",
+    "ui-migration.md",
+    "debug-profiling.md",
+    "INDEX.md",
+    "ui-design-system.md",
+    "material-system.md",
+    "gpu-chunk-pool.md",
+    "meshlets.md",
+    "pipeline-stages.md",
+    "layer-model.md",
+    "edit-protocol.md",
+    "demo-renderer.md",
+    "depth-prepass.md",
+    "extension-seams.md",
+    "traversal-acceleration.md",
+    "chunk-contract.md",
+    "chunk-field-registry.md",
+    "radiance-cascades-impl.md",
+    "Welcome.md"
+  ]
+}

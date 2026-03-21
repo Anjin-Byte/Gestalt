@@ -1,4 +1,3 @@
-// Re-exported from @gestalt/modules. Import directly from there in new code.
 export type {
   Vec3Tuple,
   MeshDescriptor,
@@ -13,4 +12,6 @@ export type {
   UiApi,
   UiControl,
   TestbedModule,
-} from "@gestalt/modules";
+} from "./types";
+
+export { ModuleHost } from "./moduleHost";

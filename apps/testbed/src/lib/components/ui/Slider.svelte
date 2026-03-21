@@ -1,0 +1,66 @@
+<script lang="ts">
+  let {
+    id,
+    label,
+    min,
+    max,
+    step,
+    value,
+    decimals = 2,
+    onValueChange,
+  }: {
+    id: string;
+    label: string;
+    min: number;
+    max: number;
+    step: number;
+    value: number;
+    decimals?: number;
+    onValueChange: (v: number) => void;
+  } = $props();
+
+  let current = $state(value);
+
+  function handleInput(e: Event) {
+    current = Number((e.currentTarget as HTMLInputElement).value);
+    onValueChange(current);
+  }
+</script>
+
+<div class="slider-field">
+  <div class="slider-header">
+    <label class="label" for={id}>{label}</label>
+    <span class="prop-val">{current.toFixed(decimals)}</span>
+  </div>
+  <input
+    {id}
+    type="range"
+    {min}
+    {max}
+    {step}
+    value={current}
+    oninput={handleInput}
+  />
+</div>
+
+<style>
+  .slider-field {
+    padding: 4px 0;
+  }
+
+  .slider-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-subtle);
+  }
+
+  .prop-val {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-mid);
+  }
+</style>
