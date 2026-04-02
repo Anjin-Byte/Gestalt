@@ -205,7 +205,7 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
         min: 8,
         max: 4096,
         step: 8,
-        initial: 512,
+        initial: 1512,
       });
       api.addNumber({
         id: "voxel-size",
