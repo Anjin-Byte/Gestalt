@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Which app to deploy"
+        required: true
+        default: legacy
+        type: choice
+        options:
+          - legacy
+          - gestalt
 
 permissions:
   contents: read
@@ -19,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BASE_PATH: /${{ github.event.repository.name }}/
+      # For push events, deploy legacy by default. For workflow_dispatch, use the input.
+      DEPLOY_TARGET: ${{ github.event.inputs.target || 'legacy' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,13 +53,30 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
 
-      - name: Build WASM example
+      - name: Build WASM (legacy)
+        if: env.DEPLOY_TARGET == 'legacy'
+        run: pnpm build:wasm:legacy
+
+      - name: Build legacy app
+        if: env.DEPLOY_TARGET == 'legacy'
+        run: pnpm build:legacy
+
+      - name: Upload artifact (legacy)
+        if: env.DEPLOY_TARGET == 'legacy'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: legacy/apps/web/dist
+
+      - name: Build WASM (gestalt)
+        if: env.DEPLOY_TARGET == 'gestalt'
         run: pnpm build:wasm
 
-      - name: Build
+      - name: Build gestalt app
+        if: env.DEPLOY_TARGET == 'gestalt'
         run: pnpm build
 
-      - name: Upload artifact
+      - name: Upload artifact (gestalt)
+        if: env.DEPLOY_TARGET == 'gestalt'
         uses: actions/upload-pages-artifact@v4
         with:
           path: apps/gestalt/dist
