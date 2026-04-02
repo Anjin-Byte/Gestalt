@@ -84,4 +84,37 @@ describe("Section", () => {
     });
     expect(queryByTestId("section-child")).not.toBeInTheDocument();
   });
+
+  it("applies .card class when card prop is true", () => {
+    const { container } = render(Section, {
+      sectionId: "card-sec",
+      title: "Card",
+      children: childSnippet,
+      card: true,
+    });
+    expect(container.querySelector(".section.card")).toBeInTheDocument();
+  });
+
+  it("does not apply .card class by default", () => {
+    const { container } = render(Section, {
+      sectionId: "flat-sec",
+      title: "Flat",
+      children: childSnippet,
+    });
+    expect(container.querySelector(".section.card")).not.toBeInTheDocument();
+  });
+
+  it("card variant still collapses and expands", async () => {
+    const { getByRole, getByTestId, container } = render(Section, {
+      sectionId: "card-collapse",
+      title: "C",
+      children: childSnippet,
+      card: true,
+    });
+    expect(getByTestId("section-child")).toBeInTheDocument();
+    await fireEvent.click(getByRole("button"));
+    expect(container.querySelector(".section-body")).toHaveAttribute("inert");
+    await fireEvent.click(getByRole("button"));
+    expect(getByTestId("section-child")).toBeInTheDocument();
+  });
 });

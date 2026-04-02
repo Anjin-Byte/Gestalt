@@ -1,4 +1,17 @@
 <script lang="ts">
+  /**
+   * BarMeter — Horizontal fill bar with threshold warning states.
+   *
+   * USE WHEN: Showing a value as a proportion of a known maximum — pool
+   * usage, memory consumption, slot capacity, buffer fill level.
+   *
+   * PREFER INSTEAD:
+   * - PropRow — when the value isn't a ratio (no meaningful "max")
+   * - CounterRow — when the trend over time matters more than the current fill
+   *
+   * STATES: Normal (green) below threshold, warning (yellow) above, critical (red) at 90%+.
+   * The threshold tick mark shows where the transition occurs.
+   */
   let {
     label,
     value,

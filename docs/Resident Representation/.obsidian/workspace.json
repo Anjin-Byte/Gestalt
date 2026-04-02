@@ -11,17 +11,28 @@
             "id": "511396d286008bdc",
             "type": "leaf",
             "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
+            }
+          },
+          {
+            "id": "85e20370e02c6c54",
+            "type": "leaf",
+            "state": {
               "type": "markdown",
               "state": {
-                "file": "ui-design-system.md",
+                "file": "material-system.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "ui-design-system"
+              "title": "material-system"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -53,7 +64,7 @@
             "state": {
               "type": "search",
               "state": {
-                "query": "",
+                "query": "amanatides ",
                 "matchingCase": false,
                 "explainSearch": false,
                 "collapseAll": false,
@@ -94,7 +105,6 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "ui-design-system.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +114,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks for ui-design-system"
+              "title": "Backlinks"
             }
           },
           {
@@ -113,12 +123,11 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "ui-design-system.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from ui-design-system"
+              "title": "Outgoing links"
             }
           },
           {
@@ -156,13 +165,12 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "ui-design-system.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline of ui-design-system"
+              "title": "Outline"
             }
           }
         ]
@@ -183,26 +191,36 @@
       "bases:Create new base": false
     }
   },
-  "active": "511396d286008bdc",
+  "active": "85e20370e02c6c54",
   "lastOpenFiles": [
-    "ui-interaction-design.md",
-    "ui-migration.md",
-    "debug-profiling.md",
-    "INDEX.md",
-    "ui-design-system.md",
-    "material-system.md",
-    "gpu-chunk-pool.md",
-    "meshlets.md",
-    "pipeline-stages.md",
-    "layer-model.md",
-    "edit-protocol.md",
-    "demo-renderer.md",
-    "depth-prepass.md",
-    "extension-seams.md",
+    "variable-mesh-pool.md",
+    "material-aware-merge.md",
+    "material-table.md",
     "traversal-acceleration.md",
-    "chunk-contract.md",
-    "chunk-field-registry.md",
-    "radiance-cascades-impl.md",
-    "Welcome.md"
+    "stages/R-5-color-pass.md",
+    "data/chunk-aabb.md",
+    "viewport-architecture.md",
+    "thread-boundary.md",
+    "data/occupancy-atlas-morton-proposal.md",
+    "pipeline-stages.md",
+    "data/material-table.md",
+    "tests/full-pipeline.md",
+    "tests/color-to-cascade.md",
+    "tests/cull-to-color.md",
+    "tests/pool-lifecycle.md",
+    "tests/depth-to-cull.md",
+    "tests/edit-roundtrip.md",
+    "tests/mesh-to-depth.md",
+    "stages/R-9-debug-viz.md",
+    "tests/material-consistency.md",
+    "stages/R-8-gi-composite.md",
+    "tests/pool-invariants.md",
+    "stages/R-7-cascade-merge.md",
+    "stages/R-6-cascade-build.md",
+    "tests/occupancy-invariants.md",
+    "stages/R-4-occlusion-cull.md",
+    "tests",
+    "stages",
+    "data"
   ]
 }

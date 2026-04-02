@@ -1,4 +1,13 @@
 <script lang="ts">
+  /**
+   * ActionButton — Styled button for one-shot actions.
+   *
+   * USE WHEN: The user needs to trigger an action — reset view, pause timeline,
+   * export data, frame selected object. Not for toggling state (use CheckboxRow)
+   * or choosing options (use ToggleGroup/SelectField).
+   *
+   * FEATURES: Optional icon via snippet slot, full-width variant, disabled state.
+   */
   import type { Snippet } from "svelte";
 
   let {

@@ -1,4 +1,16 @@
 <script lang="ts">
+  /**
+   * PropRow — Read-only key-value display with copy button.
+   *
+   * USE WHEN: Displaying a labeled value that doesn't change frequently,
+   * or where the exact value matters more than its trend. Good for coordinates,
+   * identifiers, configuration values, and static properties.
+   *
+   * PREFER INSTEAD:
+   * - CounterRow — when the value changes over time and you want a sparkline
+   * - DiffRow — when comparing two values (before/after, CPU vs GPU)
+   * - BarMeter — when the value is a ratio of current/max
+   */
   import { onDestroy } from "svelte";
   import { Copy, Check } from "lucide-svelte";
 

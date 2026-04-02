@@ -1,4 +1,14 @@
 <script lang="ts">
+  /**
+   * Section — Collapsible container with persistent state.
+   *
+   * USE WHEN: Grouping related controls or display rows in a panel.
+   * Every panel is built from Sections. Collapse state is saved to
+   * localStorage keyed by `sectionId`, so the user's layout persists.
+   *
+   * FEATURES: Chevron toggle, slide animation (140ms), optional `card`
+   * variant with rounded border container. Uppercase title, 11px font.
+   */
   import type { Snippet } from "svelte";
   import { slide } from "svelte/transition";
   import { ChevronRight } from "lucide-svelte";
@@ -7,10 +17,13 @@
     sectionId,
     title,
     children,
+    card = false,
   }: {
     sectionId: string;
     title: string;
     children: Snippet;
+    /** Card variant — rounded border container instead of bottom-separator. */
+    card?: boolean;
   } = $props();
 
   const storageKey = `panel-section:${sectionId}`;
@@ -22,7 +35,7 @@
   }
 </script>
 
-<div class="section">
+<div class="section" class:card>
   <button class="section-trigger" onclick={toggle} aria-expanded={open}>
     <span class="chevron" class:open>
       <ChevronRight size={11} strokeWidth={2} />
@@ -44,6 +57,21 @@
 
   .section:last-child {
     border-bottom: none;
+  }
+
+  /* ── Card variant ───────────────────────────────────────────────────────── */
+  /* One step above parent surface (--fill-lo = white 5%).
+     Border at --stroke-lo to separate without competing with content. */
+  .section.card {
+    background: var(--fill-lo, oklch(1 0 0 / 0.05));
+    border: 1px solid var(--stroke-lo, oklch(1 0 0 / 0.06));
+    border-radius: 6px;
+    padding: 0 8px;
+    margin-bottom: 6px;
+  }
+
+  .section.card:last-child {
+    margin-bottom: 0;
   }
 
   .section-trigger {

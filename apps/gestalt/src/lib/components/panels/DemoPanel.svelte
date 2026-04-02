@@ -3,7 +3,14 @@
     Section, PropRow, ScrubField, SelectField, CheckboxRow,
     ActionButton, StatusIndicator, BarMeter, ToggleGroup,
     CounterRow, Sparkline,
+    TreeList,
+    DiffRow, BitField,
   } from "@gestalt/phi";
+  import type { BitFieldFlag } from "@gestalt/phi";
+  import type {
+    TreeListDomain, TreeListItem, TreeListColumnDef, ContextMenuItem,
+  } from "@gestalt/phi";
+  import { Eye, EyeOff, Camera, CameraOff, Check, X, Circle } from "lucide-svelte";
   import TimelineCanvas from "$lib/components/viz/TimelineCanvas.svelte";
   import PassBreakdownTable from "$lib/components/viz/PassBreakdownTable.svelte";
   import type { FrameSample } from "$lib/stores/timeline";
@@ -180,10 +187,455 @@
     if (!demoPaused) demoFrozen = [];
   }
 
+  // ─── TreeList Demo ──────────────────────────────────────────────────────
+
+  // Demo 1: Scene graph with toggles, faded rows, drag, and badges
+  interface SceneNode {
+    id: string;
+    name: string;
+    group: string;
+    visible: boolean;
+    renderable: boolean;
+    status: "ok" | "warning" | "error" | "idle";
+    faded?: boolean;
+    badge?: "linked" | "override" | "asset";
+    depth?: number;
+  }
+
+  let sceneNodes = $state<SceneNode[]>([
+    { id: "cam-main",   name: "Main Camera",       group: "Cameras",    visible: true,  renderable: true,  status: "ok" },
+    { id: "cam-debug",  name: "Debug Camera",       group: "Cameras",    visible: false, renderable: false, status: "idle", faded: true },
+    { id: "sun",        name: "Sun Light",          group: "Lights",     visible: true,  renderable: true,  status: "ok" },
+    { id: "point-a",    name: "Point Fill A",       group: "Lights",     visible: true,  renderable: true,  status: "ok", depth: 1 },
+    { id: "point-b",    name: "Point Fill B",       group: "Lights",     visible: false, renderable: true,  status: "warning", faded: true, depth: 1 },
+    { id: "sponza",     name: "Sponza",             group: "Geometry",   visible: true,  renderable: true,  status: "ok", badge: "asset" },
+    { id: "chunk-0",    name: "Chunk [0,0,0]",      group: "Geometry",   visible: true,  renderable: true,  status: "ok", depth: 1 },
+    { id: "chunk-1",    name: "Chunk [1,0,0]",      group: "Geometry",   visible: true,  renderable: true,  status: "ok", depth: 1 },
+    { id: "chunk-2",    name: "Chunk [0,1,0]",      group: "Geometry",   visible: true,  renderable: true,  status: "warning", depth: 1 },
+    { id: "chunk-3",    name: "Chunk [1,1,0]",      group: "Geometry",   visible: false, renderable: false, status: "idle", faded: true, depth: 1 },
+    { id: "chunk-4",    name: "Chunk [0,0,1]",      group: "Geometry",   visible: true,  renderable: true,  status: "ok", depth: 1 },
+    { id: "grid-helper",name: "Grid Helper",        group: "Debug",      visible: true,  renderable: false, status: "idle", badge: "linked" },
+    { id: "axes-helper",name: "Axes Helper",        group: "Debug",      visible: true,  renderable: false, status: "idle" },
+    { id: "bbox-vis",   name: "Chunk AABB Viz",     group: "Debug",      visible: false, renderable: false, status: "idle", faded: true },
+    { id: "cascade-vis",name: "Cascade Probe Viz",  group: "Debug",      visible: false, renderable: false, status: "idle", faded: true, badge: "override" },
+  ]);
+
+  let sceneSelectedId = $state<string | null>(null);
+  let sceneActiveId = $state<string | null>(null);
+  let sceneLastAction = $state("");
+
+  const sceneColumns: TreeListColumnDef[] = [
+    { id: "visible",    width: 22, label: "Visible in viewport" },
+    { id: "renderable", width: 22, label: "Include in render" },
+    { id: "status",     width: 22, label: "Status" },
+  ];
+
+  const sceneDomain: TreeListDomain<SceneNode[]> = {
+    domainId: "demo-scene",
+    columns: sceneColumns,
+    rows(data: SceneNode[]): TreeListItem[] {
+      const groups = [...new Set(data.map(n => n.group))];
+      const items: TreeListItem[] = [];
+      for (const g of groups) {
+        const members = data.filter(n => n.group === g);
+        items.push({ kind: "group", id: g, label: g, count: members.length });
+        for (const n of members) {
+          items.push({
+            kind: "row",
+            id: n.id,
+            groupId: g,
+            label: n.name,
+            depth: n.depth,
+            faded: n.faded,
+            statusBadge: n.badge,
+            draggable: true,
+            renameable: true,
+            cells: [
+              { type: "toggle", value: n.visible,    icon: n.visible ? Eye : EyeOff, propagatable: true },
+              { type: "toggle", value: n.renderable, icon: n.renderable ? Camera : CameraOff },
+              { type: "status", status: n.status },
+            ],
+          });
+        }
+      }
+      return items;
+    },
+    onSelect(selectedId: string) {
+      sceneLastAction = `selected: ${selectedId}`;
+    },
+    onToggle(rowId: string, columnId: string, value: boolean, propagate: boolean) {
+      sceneLastAction = `toggle ${columnId}=${value} on ${rowId}${propagate ? " (propagate)" : ""}`;
+      sceneNodes = sceneNodes.map(n => {
+        if (n.id !== rowId) return n;
+        const updated = { ...n, [columnId]: value };
+        // When hiding, also fade
+        if (columnId === "visible") {
+          updated.faded = !value;
+        }
+        return updated;
+      });
+    },
+    onDrop(dragId: string, targetId: string, zone) {
+      sceneLastAction = `drop ${dragId} → ${zone} ${targetId}`;
+    },
+    onRename(id: string, newLabel: string) {
+      sceneLastAction = `rename ${id} → "${newLabel}"`;
+      sceneNodes = sceneNodes.map(n =>
+        n.id === id ? { ...n, name: newLabel } : n
+      );
+    },
+    onDelete(ids: string[]) {
+      sceneLastAction = `delete [${ids.join(", ")}]`;
+      sceneNodes = sceneNodes.filter(n => !ids.includes(n.id));
+    },
+    onDuplicate(ids: string[]) {
+      sceneLastAction = `duplicate [${ids.join(", ")}]`;
+      const dupes: SceneNode[] = [];
+      for (const id of ids) {
+        const src = sceneNodes.find(n => n.id === id);
+        if (!src) continue;
+        const newId = `${src.id}-copy-${Date.now()}`;
+        dupes.push({ ...src, id: newId, name: `${src.name} Copy` });
+      }
+      sceneNodes = [...sceneNodes, ...dupes];
+    },
+    getContextItems(id: string): ContextMenuItem[] {
+      const node = sceneNodes.find(n => n.id === id);
+      if (!node) return [];
+      return [
+        { id: "rename", label: "Rename", shortcut: "F2" },
+        { id: "duplicate", label: "Duplicate", shortcut: "⌘D" },
+        { id: "toggle-visible", label: node.visible ? "Hide" : "Show", shortcut: "H" },
+        { id: "focus", label: "Focus in Viewport" },
+        { id: "delete", label: "Delete", shortcut: "Del", danger: true, separator: true },
+      ];
+    },
+    onContextAction(rowId: string, actionId: string) {
+      sceneLastAction = `context: ${actionId} on ${rowId}`;
+      switch (actionId) {
+        case "rename":
+          // The TreeList's F2 path handles this — but from context menu
+          // we just log it. A real impl would trigger inline rename.
+          break;
+        case "duplicate":
+          sceneDomain.onDuplicate?.([rowId]);
+          return; // onDuplicate already sets sceneLastAction
+        case "delete":
+          sceneDomain.onDelete?.([rowId]);
+          return;
+        case "toggle-visible": {
+          const node = sceneNodes.find(n => n.id === rowId);
+          if (node) {
+            sceneDomain.onToggle?.(rowId, "visible", !node.visible, false);
+          }
+          return;
+        }
+        case "focus":
+          sceneLastAction = `focus viewport on ${rowId}`;
+          break;
+      }
+    },
+  };
+
+  // Demo 2: GPU buffer pool with live-updating sparklines and mono cells
+  interface PoolSlot {
+    id: string;
+    name: string;
+    sizeMB: number;
+    version: number;
+    status: "ok" | "warning" | "error" | "idle";
+    ageHistory: number[];
+  }
+
+  let poolSimulating = $state(false);
+  let poolIntervalId: ReturnType<typeof setInterval> | undefined;
+
+  let poolSlots = $state<PoolSlot[]>([
+    { id: "buf-0", name: "Chunk Vertices",   sizeMB: 32,  version: 14, status: "ok",      ageHistory: [] },
+    { id: "buf-1", name: "Chunk Indices",    sizeMB: 16,  version: 14, status: "ok",      ageHistory: [] },
+    { id: "buf-2", name: "Indirect Args",    sizeMB: 0.5, version: 7,  status: "ok",      ageHistory: [] },
+    { id: "buf-3", name: "Cascade Probes",   sizeMB: 8,   version: 3,  status: "warning", ageHistory: [] },
+    { id: "buf-4", name: "Hi-Z Pyramid",     sizeMB: 4,   version: 1,  status: "ok",      ageHistory: [] },
+    { id: "buf-5", name: "Visibility Flags",  sizeMB: 0.25,version: 14, status: "ok",     ageHistory: [] },
+    { id: "buf-6", name: "Stale Upload",      sizeMB: 64,  version: 0,  status: "error",  ageHistory: [] },
+    { id: "buf-7", name: "Free Slot",         sizeMB: 0,   version: 0,  status: "idle",   ageHistory: [] },
+  ]);
+
+  let poolSelectedId = $state<string | null>(null);
+  let poolActiveId = $state<string | null>(null);
+
+  function tickPool() {
+    poolSlots = poolSlots.map(s => {
+      const age = s.ageHistory.length > 0 ? (s.ageHistory.at(-1) ?? 0) : 0;
+      const next = s.status === "idle" ? 0
+        : s.status === "error" ? age + 2 + Math.random() * 3
+        : Math.max(0, age + (Math.random() - 0.45) * 2);
+      const history = [...s.ageHistory, next].slice(-80);
+      return {
+        ...s,
+        version: s.status !== "idle" ? s.version + (Math.random() < 0.15 ? 1 : 0) : s.version,
+        ageHistory: history,
+        status: next > 20 ? "error" as const
+          : next > 10 ? "warning" as const
+          : s.status === "idle" ? "idle" as const
+          : "ok" as const,
+      };
+    });
+  }
+
+  function togglePoolSim() {
+    if (poolSimulating) {
+      clearInterval(poolIntervalId);
+      poolIntervalId = undefined;
+      poolSimulating = false;
+    } else {
+      poolSimulating = true;
+      poolIntervalId = setInterval(tickPool, 100);
+    }
+  }
+
+  const poolColumns: TreeListColumnDef[] = [
+    { id: "status",  width: 22, label: "Buffer status" },
+    { id: "version", width: 36, label: "Version", hideBelow: 280 },
+    { id: "size",    width: 44, label: "Size (MB)", hideBelow: 320 },
+    { id: "age",     width: 52, label: "Age trend", hideBelow: 360 },
+  ];
+
+  const poolDomain: TreeListDomain<PoolSlot[]> = {
+    domainId: "demo-pool",
+    columns: poolColumns,
+    rows(data: PoolSlot[]): TreeListItem[] {
+      const active = data.filter(s => s.status !== "idle");
+      const idle = data.filter(s => s.status === "idle");
+      const totalMB = active.reduce((sum, s) => sum + s.sizeMB, 0);
+      const items: TreeListItem[] = [];
+
+      items.push({
+        kind: "group",
+        id: "active-bufs",
+        label: "Active Buffers",
+        count: active.length,
+        aggregate: { value: totalMB, max: 256, unit: "MB" },
+      });
+      for (const s of active) {
+        items.push({
+          kind: "row",
+          id: s.id,
+          groupId: "active-bufs",
+          label: s.name,
+          faded: s.status === "error",
+          cells: [
+            { type: "status", status: s.status },
+            { type: "mono", value: `v${s.version}` },
+            { type: "mono", value: s.sizeMB >= 1 ? `${s.sizeMB}` : `${(s.sizeMB * 1024).toFixed(0)} KB` },
+            { type: "spark", values: s.ageHistory, warn: 10, danger: 20 },
+          ],
+        });
+      }
+
+      if (idle.length > 0) {
+        items.push({ kind: "group", id: "idle-bufs", label: "Free Slots", count: idle.length });
+        for (const s of idle) {
+          items.push({
+            kind: "row",
+            id: s.id,
+            groupId: "idle-bufs",
+            label: s.name,
+            faded: true,
+            cells: [
+              { type: "status", status: "idle" },
+              { type: "mono", value: "—" },
+              { type: "mono", value: "—" },
+              { type: "spark", values: [] },
+            ],
+          });
+        }
+      }
+
+      return items;
+    },
+    onSelect(_id: string) {},
+    getContextItems(id: string): ContextMenuItem[] {
+      const slot = poolSlots.find(s => s.id === id);
+      if (!slot) return [];
+      const isActive = slot.status !== "idle";
+      return [
+        { id: "inspect", label: "Inspect Buffer" },
+        { id: "copy-addr", label: "Copy GPU Address", shortcut: "⌘C" },
+        { id: "force-rebuild", label: "Force Rebuild", disabled: slot.status === "idle" },
+        { id: "evict", label: "Evict to Free List", disabled: !isActive, separator: true },
+        { id: "resize", label: "Resize Allocation…", disabled: slot.status === "idle" },
+        { id: "destroy", label: "Destroy Buffer", danger: true, separator: true, disabled: slot.status === "idle" },
+      ];
+    },
+    onContextAction(rowId: string, actionId: string) {
+      const slot = poolSlots.find(s => s.id === rowId);
+      switch (actionId) {
+        case "evict":
+          if (slot) {
+            poolSlots = poolSlots.map(s =>
+              s.id === rowId ? { ...s, status: "idle" as const, sizeMB: 0, version: 0, ageHistory: [] } : s
+            );
+          }
+          break;
+        case "force-rebuild":
+          if (slot) {
+            poolSlots = poolSlots.map(s =>
+              s.id === rowId ? { ...s, version: s.version + 1, status: "ok" as const, ageHistory: [] } : s
+            );
+          }
+          break;
+        case "destroy":
+          poolSlots = poolSlots.filter(s => s.id !== rowId);
+          break;
+      }
+    },
+  };
+
+  // Demo 3: Render pass pipeline — exercises deep nesting and many columns
+  interface RenderPass {
+    id: string;
+    name: string;
+    phase: string;
+    enabled: boolean;
+    ms: number;
+    reads: string;
+    writes: string;
+  }
+
+  const renderPasses: RenderPass[] = [
+    { id: "dp",    name: "Depth Prepass",     phase: "Geometry",   enabled: true,  ms: 0.52,  reads: "—",           writes: "depth" },
+    { id: "hiz",   name: "Hi-Z Build",        phase: "Geometry",   enabled: true,  ms: 0.18,  reads: "depth",       writes: "hi-z pyramid" },
+    { id: "cull",  name: "Occlusion Cull",    phase: "Geometry",   enabled: true,  ms: 0.31,  reads: "hi-z",        writes: "indirect args" },
+    { id: "color", name: "Color Pass",        phase: "Shading",    enabled: true,  ms: 4.20,  reads: "indirect",    writes: "color RT" },
+    { id: "cb",    name: "Cascade Build",     phase: "Lighting",   enabled: true,  ms: 1.85,  reads: "depth, color",writes: "probe data" },
+    { id: "cm",    name: "Cascade Merge",     phase: "Lighting",   enabled: true,  ms: 0.92,  reads: "probe data",  writes: "GI buffer" },
+    { id: "comp",  name: "Composite",         phase: "Post",       enabled: true,  ms: 0.14,  reads: "color, GI",   writes: "final RT" },
+    { id: "taa",   name: "TAA",               phase: "Post",       enabled: false, ms: 0.00,  reads: "final RT",    writes: "resolved RT" },
+    { id: "bloom", name: "Bloom",             phase: "Post",       enabled: false, ms: 0.00,  reads: "resolved RT", writes: "resolved RT" },
+    { id: "dbg",   name: "Debug Overlay",     phase: "Debug",      enabled: true,  ms: 0.08,  reads: "final RT",    writes: "swapchain" },
+  ];
+
+  let passSelectedId = $state<string | null>(null);
+  let passActiveId = $state<string | null>(null);
+  let passNodes = $state(renderPasses);
+
+  const passColumns: TreeListColumnDef[] = [
+    { id: "enabled", width: 22, label: "Pass enabled" },
+    { id: "ms",      width: 48, label: "GPU time (ms)" },
+    { id: "reads",   width: 64, label: "Reads", hideBelow: 340 },
+    { id: "writes",  width: 64, label: "Writes", hideBelow: 400 },
+  ];
+
+  const passDomain: TreeListDomain<RenderPass[]> = {
+    domainId: "demo-passes",
+    columns: passColumns,
+    rows(data: RenderPass[]): TreeListItem[] {
+      const phases = [...new Set(data.map(p => p.phase))];
+      const items: TreeListItem[] = [];
+      for (const phase of phases) {
+        const members = data.filter(p => p.phase === phase);
+        const totalMs = members.filter(p => p.enabled).reduce((s, p) => s + p.ms, 0);
+        items.push({
+          kind: "group",
+          id: phase,
+          label: `${phase} (${totalMs.toFixed(1)} ms)`,
+          count: members.length,
+        });
+        for (const p of members) {
+          items.push({
+            kind: "row",
+            id: p.id,
+            groupId: phase,
+            label: p.name,
+            faded: !p.enabled,
+            cells: [
+              { type: "toggle", value: p.enabled, icon: p.enabled ? Check : X },
+              { type: "mono", value: p.enabled ? `${p.ms.toFixed(2)}` : "—" },
+              { type: "mono", value: p.reads },
+              { type: "mono", value: p.writes },
+            ],
+          });
+        }
+      }
+      return items;
+    },
+    onToggle(rowId, _columnId, value) {
+      passNodes = passNodes.map(p =>
+        p.id === rowId ? { ...p, enabled: value } : p
+      );
+    },
+    getContextItems(id: string): ContextMenuItem[] {
+      const pass = passNodes.find(p => p.id === id);
+      if (!pass) return [];
+      return [
+        { id: "toggle", label: pass.enabled ? "Disable Pass" : "Enable Pass" },
+        { id: "solo", label: "Solo (disable all others)" },
+        { id: "profile", label: "Profile This Pass", shortcut: "P" },
+        { id: "inspect-reads", label: `Inspect Reads: ${pass.reads}`, disabled: pass.reads === "—" },
+        { id: "inspect-writes", label: `Inspect Writes: ${pass.writes}`, separator: true },
+        { id: "move-up", label: "Move Up", shortcut: "⌥↑", disabled: passNodes.indexOf(pass) === 0 },
+        { id: "move-down", label: "Move Down", shortcut: "⌥↓", disabled: passNodes.indexOf(pass) === passNodes.length - 1 },
+      ];
+    },
+    onContextAction(rowId: string, actionId: string) {
+      switch (actionId) {
+        case "toggle": {
+          const pass = passNodes.find(p => p.id === rowId);
+          if (pass) {
+            passNodes = passNodes.map(p =>
+              p.id === rowId ? { ...p, enabled: !p.enabled } : p
+            );
+          }
+          break;
+        }
+        case "solo":
+          passNodes = passNodes.map(p => ({
+            ...p,
+            enabled: p.id === rowId,
+          }));
+          break;
+        case "move-up": {
+          const idx = passNodes.findIndex(p => p.id === rowId);
+          if (idx > 0) {
+            const copy = [...passNodes];
+            [copy[idx - 1], copy[idx]] = [copy[idx], copy[idx - 1]];
+            passNodes = copy;
+          }
+          break;
+        }
+        case "move-down": {
+          const idx = passNodes.findIndex(p => p.id === rowId);
+          if (idx < passNodes.length - 1) {
+            const copy = [...passNodes];
+            [copy[idx], copy[idx + 1]] = [copy[idx + 1], copy[idx]];
+            passNodes = copy;
+          }
+          break;
+        }
+      }
+    },
+  };
+
+  // TreeList selection change handlers
+  function onSceneSelChange(sel: string | null, act: string | null) {
+    sceneSelectedId = sel;
+    sceneActiveId = act;
+  }
+  function onPoolSelChange(sel: string | null, act: string | null) {
+    poolSelectedId = sel;
+    poolActiveId = act;
+  }
+  function onPassSelChange(sel: string | null, act: string | null) {
+    passSelectedId = sel;
+    passActiveId = act;
+  }
+
   $effect(() => {
     return () => {
       if (demoIntervalId  !== undefined) clearInterval(demoIntervalId);
       if (sparkIntervalId !== undefined) clearInterval(sparkIntervalId);
+      if (poolIntervalId  !== undefined) clearInterval(poolIntervalId);
     };
   });
 </script>
@@ -555,6 +1007,54 @@
     {/if}
   </Section>
 
+  <Section sectionId="demo-diffrow" title="DiffRow">
+    <div class="demo-note">
+      Prev → Current with delta indicator · Green for improvement · Yellow for regression ·
+      invertWarning flips the logic (e.g. FPS where lower = bad)
+    </div>
+    <DiffRow label="Frame time" prev={8.2} current={12.5} unit="ms" decimals={1} />
+    <DiffRow label="Meshlets culled" prev={340} current={280} />
+    <DiffRow label="Mesh rebuilds" prev={3} current={3} />
+    <DiffRow label="FPS" prev={60} current={45} invertWarning />
+    <DiffRow label="Buffer usage" prev={128} current={96} unit="MB" />
+    <DiffRow label="Cascade rays" prev={14200} current={18400} />
+  </Section>
+
+  <Section sectionId="demo-bitfield" title="BitField">
+    <div class="demo-note">
+      Pipeline state flags · Green = on · Dim = off · Yellow = unknown/tri-state ·
+      Hover for full label via title attribute
+    </div>
+    <BitField label="Render State" flags={[
+      { label: "ZW", value: true, title: "Depth Write" },
+      { label: "ZT", value: true, title: "Depth Test" },
+      { label: "BFC", value: true, title: "Backface Cull" },
+      { label: "ST", value: false, title: "Stencil Test" },
+      { label: "BL", value: false, title: "Blending" },
+      { label: "SC", value: true, title: "Scissor" },
+    ]} />
+    <BitField label="Chunk Flags" flags={[
+      { label: "V", value: true, title: "Visible" },
+      { label: "D", value: false, title: "Dirty" },
+      { label: "L", value: true, title: "Loaded" },
+      { label: "M", value: undefined, title: "Meshed (pending)" },
+      { label: "C", value: true, title: "Culled" },
+      { label: "U", value: false, title: "Uploaded" },
+      { label: "E", value: true, title: "Eviction Candidate" },
+      { label: "R", value: undefined, title: "Readback Pending" },
+    ]} />
+    <BitField label="Pass Enable" flags={[
+      { label: "DP", value: true, title: "Depth Prepass" },
+      { label: "HZ", value: true, title: "Hi-Z Build" },
+      { label: "OC", value: true, title: "Occlusion Cull" },
+      { label: "CO", value: true, title: "Color Pass" },
+      { label: "CB", value: true, title: "Cascade Build" },
+      { label: "CM", value: true, title: "Cascade Merge" },
+      { label: "TA", value: false, title: "TAA" },
+      { label: "BM", value: false, title: "Bloom" },
+    ]} />
+  </Section>
+
   <Section sectionId="demo-sections" title="Section (meta)">
     <div class="demo-note">
       Sections are collapsible. State persists to localStorage per <code>sectionId</code>.
@@ -563,6 +1063,74 @@
       <PropRow label="Nesting depth" value="2" />
       <PropRow label="Works" value="yes" />
     </Section>
+  </Section>
+
+  <!-- ── TreeList Demos ─────────────────────────────────────────────────── -->
+
+  <Section sectionId="demo-treelist-scene" title="TreeList — Scene Graph" card>
+    <div class="demo-note">
+      Right-click for context menu · Toggle columns (👁 / 📷) ·
+      Shift+click propagates · Drag rows · Filter by name ·
+      ↑↓ navigate · Double-click / F2 rename · Del remove · ⌘D duplicate
+    </div>
+
+    <div class="treelist-demo-frame">
+      <TreeList
+        domain={sceneDomain}
+        data={sceneNodes}
+        selectedId={sceneSelectedId}
+        activeId={sceneActiveId}
+        onselectionchange={onSceneSelChange}
+      />
+    </div>
+
+    {#if sceneLastAction}
+      <PropRow label="last action" value={sceneLastAction} />
+    {/if}
+    <PropRow label="selected" value={sceneSelectedId ?? "none"} />
+    <PropRow label="active" value={sceneActiveId ?? "none"} />
+  </Section>
+
+  <Section sectionId="demo-treelist-pool" title="TreeList — GPU Buffer Pool" card>
+    <div class="demo-note">
+      Right-click: Evict, Force Rebuild, Destroy · Live sparklines per buffer ·
+      Status dots · Group header BarMeter · Start to simulate age drift ·
+      Stale buffers trend red, error buffers fade
+    </div>
+
+    <div class="treelist-demo-frame">
+      <TreeList
+        domain={poolDomain}
+        data={poolSlots}
+        selectedId={poolSelectedId}
+        activeId={poolActiveId}
+        onselectionchange={onPoolSelChange}
+      />
+    </div>
+
+    <div class="btn-row" style="margin-top: 6px;">
+      <ActionButton onclick={togglePoolSim}>
+        {poolSimulating ? "Stop" : "Start"} Simulation
+      </ActionButton>
+    </div>
+  </Section>
+
+  <Section sectionId="demo-treelist-passes" title="TreeList — Render Passes" card>
+    <div class="demo-note">
+      Right-click: Solo, Move Up/Down, Inspect Reads/Writes ·
+      Toggle passes on/off · Disabled passes fade · Phase totals in headers ·
+      4 responsive columns · Reads/Writes hide below 340/400px
+    </div>
+
+    <div class="treelist-demo-frame">
+      <TreeList
+        domain={passDomain}
+        data={passNodes}
+        selectedId={passSelectedId}
+        activeId={passActiveId}
+        onselectionchange={onPassSelChange}
+      />
+    </div>
   </Section>
 </div>
 
@@ -675,5 +1243,14 @@
 
   .spark-val-danger {
     color: var(--color-destructive);
+  }
+
+  /* ── TreeList demo frames ────────────────────────────────────────────── */
+  .treelist-demo-frame {
+    height: 220px;
+    border: 1px solid var(--stroke-lo);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 6px;
   }
 </style>

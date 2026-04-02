@@ -28,20 +28,25 @@ legacy/
 ```bash
 pnpm install
 pnpm dev          # starts apps/gestalt at http://localhost:5173
+pnpm dev:legacy   # starts legacy/apps/web at http://localhost:5174 or next free port
 ```
 
 ## Build
 
 ```bash
 pnpm build:wasm   # compile Rust crates → apps/gestalt/src/wasm/ (requires wasm-pack)
+pnpm build:wasm:legacy  # compile Rust crates → legacy/apps/web/src/wasm/
 pnpm build        # Vite production build → apps/gestalt/dist/
+pnpm build:legacy # Vite production build → legacy/apps/web/dist/
 ```
 
 Or use the convenience scripts:
 
 ```bash
 ./build.sh        # build:wasm (if wasm-pack available) + build
+./build.sh legacy # build:wasm:legacy (if wasm-pack available) + build:legacy
 ./run.sh          # pnpm dev
+./run.sh legacy   # pnpm dev:legacy
 ```
 
 ## WASM crates

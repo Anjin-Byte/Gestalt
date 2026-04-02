@@ -71,7 +71,7 @@ export const createWasmGreedyMesherModule = (): TestbedModule => {
         await ensureClients();
         ctx.logger.info(`[greedy-mesher] init complete: ${statusText}`);
       } catch (error) {
-        statusText = "Missing (run pnpm build:wasm)";
+        statusText = "Missing (run pnpm build:wasm:legacy)";
         updateStatus?.(statusText);
         ctx.logger.warn(`[greedy-mesher] init failed: ${(error as Error).message}`);
         chunkManagerClient?.dispose();

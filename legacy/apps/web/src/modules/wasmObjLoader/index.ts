@@ -180,7 +180,7 @@ export const createWasmObjLoaderModule = (): TestbedModule => {
         updateStatus?.(statusText);
         ctx.logger.info("WASM OBJ loader module loaded.");
       } catch (error) {
-        statusText = "Missing (run pnpm build:wasm)";
+        statusText = "Missing (run pnpm build:wasm:legacy)";
         updateStatus?.(statusText);
         ctx.logger.warn(
           `WASM OBJ loader failed to load: ${(error as Error).message}`

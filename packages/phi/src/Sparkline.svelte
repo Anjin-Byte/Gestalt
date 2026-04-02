@@ -1,4 +1,16 @@
 <script lang="ts">
+  /**
+   * Sparkline — Canvas-based mini line chart with filled area.
+   *
+   * USE WHEN: Showing a small inline history of numeric values. Usually
+   * embedded inside CounterRow, but can be used standalone for custom layouts.
+   *
+   * PREFER INSTEAD:
+   * - CounterRow — wraps Sparkline with a label + formatted value automatically
+   *
+   * PROPS: `values` is the data array. `warn`/`danger` color the endpoint dot
+   * based on the latest value. DPI-aware canvas rendering with ResizeObserver.
+   */
   import { onMount, onDestroy } from "svelte";
 
   let {

@@ -1,4 +1,15 @@
 <script lang="ts">
+  /**
+   * CheckboxRow — Labeled toggle checkbox.
+   *
+   * USE WHEN: The user needs to enable/disable a feature, toggle a debug
+   * overlay, or switch a boolean option. Renders as a styled checkbox with label.
+   *
+   * PREFER INSTEAD:
+   * - ToggleGroup — when choosing between N mutually exclusive options (not on/off)
+   * - StatusIndicator — when showing a read-only boolean state (no user interaction)
+   * - BitField — when showing multiple read-only boolean flags in a row
+   */
   let {
     label,
     checked = false,

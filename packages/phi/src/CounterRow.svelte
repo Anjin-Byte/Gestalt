@@ -1,4 +1,18 @@
 <script lang="ts">
+  /**
+   * CounterRow — Numeric value with inline sparkline history.
+   *
+   * USE WHEN: Displaying a value that changes every frame or on a regular
+   * interval, and the trend over time is important. The sparkline shows
+   * the last N values as a mini line chart.
+   *
+   * PREFER INSTEAD:
+   * - PropRow — when the value is static or the trend doesn't matter
+   * - DiffRow — when comparing two specific values (not a time series)
+   * - BarMeter — when the value is a ratio with a known maximum
+   *
+   * PROPS: `history` drives the sparkline. `warn`/`danger` color the endpoint dot.
+   */
   import Sparkline from "./Sparkline.svelte";
 
   let {

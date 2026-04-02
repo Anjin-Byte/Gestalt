@@ -1,4 +1,16 @@
 <script lang="ts">
+  /**
+   * SelectField — Dropdown select for choosing one of many options.
+   *
+   * USE WHEN: The user needs to pick from 5+ options, or when horizontal
+   * space is limited and a dropdown is more appropriate than always-visible buttons.
+   *
+   * PREFER INSTEAD:
+   * - ToggleGroup — for 2-4 options that should always be visible (render mode, view type)
+   *
+   * PROPS: `options` is [{ value, label }]. `inline` variant uses smaller font/padding.
+   * Built on bits-ui Select primitive for accessible dropdown behavior.
+   */
   import { Select } from "bits-ui";
   import { ChevronDown, Check } from "lucide-svelte";
 

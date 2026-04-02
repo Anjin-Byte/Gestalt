@@ -38,6 +38,8 @@ This vault defines the canonical runtime voxel representation and the GPU-native
 | [radiance-cascades-impl](radiance-cascades-impl.md) | **Done** | Cascade build / merge / apply passes grounded in resident chunks |
 | [depth-prepass](depth-prepass.md) | **Done** | Raster optimization chain: front-to-back sort → depth prepass → Hi-Z culling |
 | [debug-profiling](debug-profiling.md) | **Done** | Timestamp query infrastructure, pass timeline visualization, debug render modes, diagnostic counters, five-tier testing strategy |
+| [material-aware-merge](material-aware-merge.md) | **Done** | Per-voxel material identity in greedy merge: on-demand lookup design, register pressure analysis, bitpacking decode, performance model |
+| [variable-mesh-pool](variable-mesh-pool.md) | **Done** | Variable-size freelist allocator for vertex/index pools, replacing fixed per-slot allocation |
 
 ## UI Documents
 
@@ -47,10 +49,23 @@ This vault defines the canonical runtime voxel representation and the GPU-native
 | [ui-migration](ui-migration.md) | **Done** | Migration plan: panel architecture, uiApi store bridge, dependency changes, five build phases |
 | [ui-interaction-design](ui-interaction-design.md) | **Done** | Interaction design language: Blender-inspired scrub fields, spatial grammar, component contracts, status bar, implementation priority |
 
+## Strict Specifications
+
+Formal specifications with exact byte layouts, numbered invariants, pre/postconditions, and testing strategies.
+
+| Directory | Contents | Doc count |
+|---|---|---|
+| [data/](data/INDEX.md) | One doc per GPU-resident data structure (authoritative, derived, per-frame, control plane) | 20 |
+| [stages/](stages/INDEX.md) | One doc per pipeline stage (I-1 through I-3, R-1 through R-9) | 12 |
+| [tests/](tests/INDEX.md) | Consistency tests: data invariants, stage contracts, cross-cutting properties | 11 |
+
+---
+
 ## Reference
 
-- [gpu-driven-rendering INDEX](../legacy/gpu-driven-rendering/INDEX.md) — ADR-0011 hybrid pipeline architecture
-- [ADR-0010](../adr/0010-radiance-cascades.md) — ADR-0010 radiance cascades decision
+- [ADR-0013](../adr/0013-full-webgpu-worker-pipeline.md) — Full WebGPU pipeline in renderer worker (supersedes ADR-0011)
+- [ADR-0010](../adr/0010-radiance-cascades.md) — Radiance cascades decision
 - [Amanatides & Woo](../research/woo/Amanatides_and_Woo.md) — DDA traversal reference
+- [gpu-driven-rendering INDEX](../legacy/gpu-driven-rendering/INDEX.md) — Legacy hybrid pipeline architecture (ADR-0011, superseded)
 
 ---

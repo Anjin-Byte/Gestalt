@@ -1,4 +1,15 @@
 <script lang="ts">
+  /**
+   * Slider — Simple labeled range input.
+   *
+   * USE WHEN: The user needs to explore a numeric range where precision isn't
+   * critical — volume, opacity, a visualization parameter.
+   *
+   * PREFER INSTEAD:
+   * - ScrubField — when fine control matters (drag scrub, step buttons, type-to-edit)
+   *
+   * Uses a native HTML range input. Value shown right-aligned in the header.
+   */
   let {
     id,
     label,

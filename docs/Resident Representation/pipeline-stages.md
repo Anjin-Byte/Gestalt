@@ -8,6 +8,8 @@
 
 Derived from [layer-model](layer-model.md) — three products from one voxel truth.
 
+**Thread ownership (ADR-0014):** All GPU work (compute + render) executes on the **main thread**. The Web Worker handles CPU-only computation (OBJ parsing, data preparation). See [thread-boundary](thread-boundary.md) for the full split.
+
 ---
 
 ## Stage Overview
@@ -31,7 +33,7 @@ Derived from [layer-model](layer-model.md) — three products from one voxel tru
  │  Stage R-6: Radiance Cascade Build                               │
  │  Stage R-7: Cascade Merge                                        │
  │  Stage R-8: GI Application + Composite                          │
- │  Stage R-9: Three.js Overlay                                     │
+ │  Stage R-9: Viewport Shading & Debug Visualization               │
  └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -254,17 +256,42 @@ If separate: fullscreen quad reads `cascade_atlas_0` + `color_target`, writes co
 
 ---
 
-### Stage R-9: Three.js Overlay
-*Every frame, last*
+### Stage R-9: Viewport Shading & Debug Visualization
+*Every frame, last. Behavior depends on active render mode.*
 
-Three.js renders debug helpers, grid, axes, sprites, UI geometry as an overlay.
+Controls how the final image is presented. Working modes are for everyday use; debug modes expose pipeline internals. All modes are GPU-side in the worker. See [R-9 full spec](stages/R-9-debug-viz.md) for implementation details.
 
 | Buffer / Texture | Direction | Format | Notes |
 |---|---|---|---|
-| `depth_texture` | READ/TEST | `depth32float` | Depth test against chunk geometry |
-| `color_target` | READ/WRITE | `rgba8unorm` | Composite over existing color |
+| `depth_texture` | READ | `depth32float` | Depth test, linearization, world-position reconstruction |
+| `color_target` | READ/WRITE | `rgba8unorm` | Replace or composite depending on mode |
+| `hiz_pyramid` | READ | `r32float` | Hi-Z mip visualization (0x11 only) |
+| `chunk_flags` | READ | `u32` | Chunk state coloring (0x12 only) |
+| `occupancy_summary` | READ | `array<u32>` | Bricklet heatmap (0x13 only) |
+| `vertex_pool` / `index_pool` | READ | Geometry | Wireframe, normals, matcap, chunk state modes |
+| `matcap_texture` | READ | `rgba8unorm` 2D | Matcap mode (0x05 only) |
 
-Three.js does not render chunk geometry. It reads the same depth buffer to correctly composite debug overlays against existing chunk depth.
+**Working views** (`0x00–0x0F`):
+
+| Code | Mode | Description |
+|---|---|---|
+| `0x00` | **Solid** | Flat directional light, no GI. Default. |
+| `0x01` | **GI** | Full cascade GI (beauty mode). |
+| `0x02` | **Wireframe** | Edges only. |
+| `0x03` | **Solid + Wireframe** | Solid with wireframe overlay. |
+| `0x04` | **Normals** | World-space normal → RGB. |
+| `0x05` | **Matcap** | Spherical environment material. |
+
+**Debug views** (`0x10–0x1F`):
+
+| Code | Mode | Description |
+|---|---|---|
+| `0x10` | **Depth** | Grayscale linearized depth. |
+| `0x11` | **Hi-Z Mip** | Selected mip level of Hi-Z pyramid. |
+| `0x12` | **Chunk State** | Color by lifecycle state. |
+| `0x13` | **Occupancy** | Bricklet density heatmap. |
+
+UI controls live in the Svelte panel layer. Mode changes sent via `SetRenderMode` binary protocol command.
 
 ---
 
@@ -301,7 +328,7 @@ Three.js does not render chunk geometry. It reads the same depth buffer to corre
 2. `chunk_occupancy_atlas` is written during ingest (I-2), read during R-6. Never written during render.
 3. `cascade_atlas_0` is written by R-7, read by R-5. R-5 must not begin until R-7 completes (explicit barrier or separate submit).
 4. `indirect_draw_buf` is written by R-4, consumed by R-5 indirect draw. Pipeline barrier between compute and indirect draw.
-5. Three.js (R-9) must not clear `depth_texture` — it must be configured to reuse the existing depth attachment.
+5. Debug visualization (R-9) must not clear `depth_texture` — it reads the existing depth for wireframe depth test and depth visualization.
 
 ---
 

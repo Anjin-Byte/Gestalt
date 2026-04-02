@@ -1,4 +1,15 @@
 <script lang="ts">
+  /**
+   * StatusIndicator — Colored dot showing system health.
+   *
+   * USE WHEN: Displaying a boolean or categorical state — is this subsystem
+   * healthy? Is the GPU device active? Are wireframe buffers allocated?
+   * Four states: ok (green, pulsing), warning (yellow), error (red), idle (gray).
+   *
+   * PREFER INSTEAD:
+   * - BitField — when showing multiple boolean flags in a compact row
+   * - PropRow — when the state is better expressed as a text value
+   */
   let {
     status = "idle",
     label,

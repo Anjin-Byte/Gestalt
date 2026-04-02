@@ -5,11 +5,19 @@
   "scripts": {
     "dev": "pnpm -C apps/gestalt dev",
     "dev:legacy": "pnpm -C legacy/apps/web dev",
+    "dev:legacy:full": "pnpm build:wasm:legacy && pnpm dev:legacy",
     "build": "pnpm -C apps/gestalt build",
     "build:legacy": "pnpm -C legacy/apps/web build",
-    "build:wasm": "cd crates/wasm_obj_loader && wasm-pack build --target web --out-dir ../../apps/gestalt/src/wasm/wasm_obj_loader && cd ../wasm_webgpu_demo && wasm-pack build --target web --out-dir ../../apps/gestalt/src/wasm/wasm_webgpu_demo && cd ../wasm_voxelizer && wasm-pack build --target web --out-dir ../../apps/gestalt/src/wasm/wasm_voxelizer && cd ../wasm_greedy_mesher && wasm-pack build --target web --out-dir ../../apps/gestalt/src/wasm/wasm_greedy_mesher",
+    "build:legacy:full": "pnpm build:wasm:legacy && pnpm build:legacy",
+    "build:wasm": "./scripts/build-wasm.sh gestalt",
+    "build:wasm:legacy": "./scripts/build-wasm.sh legacy",
+    "build:wasm:all": "./scripts/build-wasm.sh all",
     "preview": "pnpm -C apps/gestalt preview",
+    "preview:legacy": "pnpm -C legacy/apps/web preview",
     "test": "pnpm -C apps/gestalt test",
     "test:e2e": "pnpm -C apps/gestalt test:e2e"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.69"
   }
 }

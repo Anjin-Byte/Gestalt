@@ -147,7 +147,7 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
         logger!("[voxel-chunk-pipeline] init complete");
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        statusText = "Missing (run pnpm build:wasm)";
+        statusText = "Missing (run pnpm build:wasm:legacy)";
         updateStatus?.(statusText);
         ctx.logger.warn(`[voxel-chunk-pipeline] init failed: ${msg}`);
         releaseResources();

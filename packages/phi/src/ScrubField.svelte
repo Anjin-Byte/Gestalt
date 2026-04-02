@@ -1,4 +1,19 @@
 <script lang="ts">
+  /**
+   * ScrubField — Precision numeric input with drag, step, and direct edit.
+   *
+   * USE WHEN: The user needs fine control over a numeric parameter — exposure,
+   * threshold, camera FOV, material roughness. Supports drag-to-scrub,
+   * arrow key stepping, click-to-type, and modifier keys for speed control.
+   *
+   * PREFER INSTEAD:
+   * - Slider — when rough range exploration is sufficient
+   * - PropRow — when the value is read-only
+   *
+   * FEATURES: Drag scrub with Shift (0.1x) / Ctrl (10x) modifiers, step buttons
+   * with repeat-on-hold, double-click reset to default, right-click context menu,
+   * ARIA spinbutton semantics, tooltip keybind hints.
+   */
   import { Portal } from "bits-ui";
   import { ChevronLeft, ChevronRight } from "lucide-svelte";
   import { setHint, clearHint } from "$lib/stores/status";

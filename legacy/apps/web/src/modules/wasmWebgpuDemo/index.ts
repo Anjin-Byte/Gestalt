@@ -138,7 +138,7 @@ export const createWasmWebgpuDemoModule = (): TestbedModule => {
         updateStatus?.(statusText);
         ctx.logger.info("WASM WebGPU demo module loaded.");
       } catch (error) {
-        statusText = "Missing (run pnpm build:wasm)";
+        statusText = "Missing (run pnpm build:wasm:legacy)";
         updateStatus?.(statusText);
         ctx.logger.warn(`WASM WebGPU demo failed to load: ${(error as Error).message}`);
       }
@@ -180,7 +180,7 @@ export const createWasmWebgpuDemoModule = (): TestbedModule => {
         if (!device) {
           statusText = "WebGPU unavailable";
         } else if (!hadWgsl) {
-          statusText = "Missing (run pnpm build:wasm)";
+          statusText = "Missing (run pnpm build:wasm:legacy)";
         } else {
           statusText = "Fallback (JS)";
         }

@@ -141,7 +141,7 @@ export const createWasmVoxelizerModule = (): TestbedModule => {
         updateStatus?.(statusText);
         logStage("init", `complete (ok=${Boolean(voxelizer)})`);
       } catch (error) {
-        statusText = "Missing (run pnpm build:wasm)";
+        statusText = "Missing (run pnpm build:wasm:legacy)";
         updateStatus?.(statusText);
         ctx.logger.warn(`WASM voxelizer failed to load: ${(error as Error).message}`);
       }

@@ -4,14 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gestalt</title>
+    <link rel="icon" href="data:,">
     <!--
-      coi-serviceworker must load before any other script.
-      In dev the Vite server sets COOP/COEP headers directly.
-      In production (GitHub Pages) this service worker injects those headers
-      so that SharedArrayBuffer is available for the renderer worker.
+      coi-serviceworker injects COOP/COEP headers via service worker so that
+      SharedArrayBuffer is available on hosts that can't set HTTP headers
+      (e.g. GitHub Pages). In dev, Vite sets the headers directly.
       See: docs/architecture/wasm-boundary-protocol.md
     -->
-    <script src="/coi-serviceworker.js"></script>
+    <script>
+      if (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+        const s = document.createElement("script");
+        s.src = "/coi-serviceworker.js";
+        document.head.appendChild(s);
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -1,4 +1,18 @@
 <script lang="ts">
+  /**
+   * ToggleGroup — Segmented radio buttons for mutually exclusive selection.
+   *
+   * USE WHEN: The user chooses between 2-4 mutually exclusive options and
+   * all options should be visible at once. Render mode (Solid/Wire/Normals/Depth),
+   * view type, coordinate space — anywhere a small set of choices matters.
+   *
+   * PREFER INSTEAD:
+   * - SelectField — for 5+ options or when horizontal space is tight
+   * - CheckboxRow — for on/off toggles (not mutually exclusive choices)
+   *
+   * FEATURES: Keyboard arrow navigation with wrap, divider lines between segments,
+   * highlighted selected state. 22px height fits dense panel layouts.
+   */
   import { setHint, clearHint } from "$lib/stores/status";
 
   let {

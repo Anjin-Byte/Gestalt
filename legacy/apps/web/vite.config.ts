@@ -16,7 +16,7 @@ export default defineConfig({
         find: "@gestalt/voxelizer-js",
         replacement: path.resolve(
           fileURLToPath(
-            new URL("../../packages/voxelizer-js/src/index.ts", import.meta.url)
+            new URL("../../../packages/voxelizer-js/src/index.ts", import.meta.url)
           )
         )
       },

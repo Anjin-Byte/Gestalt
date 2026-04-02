@@ -1,8 +1,9 @@
 # ADR-0011: Hybrid GPU-Driven Rendering Pipeline
 
 **Type:** adr
-**Status:** proposed
+**Status:** superseded
 **Supersedes:** [ADR-0001](0001-renderer-choice.md), [ADR-0008](0008-design-gap-mitigations.md)
+**Superseded by:** [ADR-0013](0013-full-webgpu-worker-pipeline.md)
 **Date:** 2026-03-09
 Depends on: ADR-0003 (Binary Greedy Meshing), ADR-0007 (Material Strategy), ADR-0010 (Radiance Cascades)
 
