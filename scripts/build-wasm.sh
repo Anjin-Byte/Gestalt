@@ -11,6 +11,9 @@ CRATES=(
   "wasm_greedy_mesher"
 )
 
+# The main renderer crate — built separately for the gestalt app.
+RENDERER_CRATE="wasm_renderer"
+
 usage() {
   echo "Usage: $0 <gestalt|legacy|all>" >&2
   exit 1
@@ -35,14 +38,26 @@ build_target() {
   echo "Finished WASM build for ${target_name}."
 }
 
+build_renderer() {
+  echo "Building ${RENDERER_CRATE} -> apps/gestalt/src/wasm/${RENDERER_CRATE}"
+  (
+    cd "${ROOT_DIR}/crates/${RENDERER_CRATE}"
+    wasm-pack build \
+      --target web \
+      --out-dir "${ROOT_DIR}/apps/gestalt/src/wasm/${RENDERER_CRATE}"
+  )
+}
+
 case "${1:-}" in
   gestalt)
+    build_renderer
     build_target "gestalt" "apps/gestalt/src/wasm"
     ;;
   legacy)
     build_target "legacy" "legacy/apps/web/src/wasm"
     ;;
   all)
+    build_renderer
     build_target "gestalt" "apps/gestalt/src/wasm"
     build_target "legacy" "legacy/apps/web/src/wasm"
     ;;
