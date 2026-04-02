@@ -44,6 +44,8 @@ function coiServiceWorkerPlugin(): Plugin {
 }
 
 export default defineConfig({
+  base: process.env.BASE_PATH || "/",
+
   plugins: [
     svelte(),
     tailwindcss(),
