@@ -14,7 +14,7 @@
     <script>
       if (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
         const s = document.createElement("script");
-        s.src = "/coi-serviceworker.js";
+        s.src = new URL("coi-serviceworker.js", location.href).href;
         document.head.appendChild(s);
       }
     </script>
