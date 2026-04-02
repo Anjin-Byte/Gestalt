@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BASE_PATH: /${{ github.event.repository.name }}/
-      # For push events, deploy legacy by default. For workflow_dispatch, use the input.
       DEPLOY_TARGET: ${{ github.event.inputs.target || 'legacy' }}
     steps:
       - name: Checkout
@@ -53,11 +52,7 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
 
-      - name: Build WASM (legacy)
-        if: env.DEPLOY_TARGET == 'legacy'
-        run: pnpm build:wasm:legacy
-
-      - name: Build legacy app
+      - name: Build legacy (WASM + app)
         if: env.DEPLOY_TARGET == 'legacy'
         run: pnpm build:legacy
 
@@ -67,11 +62,7 @@ jobs:
         with:
           path: legacy/apps/web/dist
 
-      - name: Build WASM (gestalt)
-        if: env.DEPLOY_TARGET == 'gestalt'
-        run: pnpm build:wasm
-
-      - name: Build gestalt app
+      - name: Build gestalt (WASM + app)
         if: env.DEPLOY_TARGET == 'gestalt'
         run: pnpm build
 

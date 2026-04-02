@@ -18,7 +18,6 @@
     "paths": {
       "@gestalt/phi": ["../../packages/phi/src/index.ts"],
       "@gestalt/voxelizer-js": ["../../packages/voxelizer-js/src/index.ts"],
-      "@web/*": ["../../legacy/apps/web/src/*"],
       "$lib": ["./src/lib"],
       "$lib/*": ["./src/lib/*"]
     }

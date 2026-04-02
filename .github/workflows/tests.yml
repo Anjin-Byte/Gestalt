@@ -28,7 +28,7 @@ jobs:
       - name: Run Phi unit tests
         run: pnpm -C packages/phi test
 
-  cargo-test:
+  rust-test-v2:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -40,8 +40,29 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
-      - name: Run cargo tests
-        run: cargo test --workspace
+      - name: Run v2 Rust tests (wasm_renderer)
+        run: cargo test -p wasm_renderer
+        working-directory: crates/wasm_renderer
+
+  rust-test-legacy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run legacy Rust tests (greedy_mesher)
+        working-directory: legacy/crates/greedy_mesher
+        run: cargo test
+
+      - name: Run legacy Rust tests (voxelizer)
+        working-directory: legacy/crates/voxelizer
+        run: cargo test
 
   wasm-test:
     runs-on: ubuntu-latest
@@ -62,7 +83,7 @@ jobs:
         run: npx --yes playwright install chromium --with-deps
 
       - name: Run wasm-bindgen tests
-        run: wasm-pack test --headless --chrome crates/wasm_greedy_mesher
+        run: wasm-pack test --headless --chrome legacy/crates/wasm_greedy_mesher
 
   playwright:
     runs-on: ubuntu-latest

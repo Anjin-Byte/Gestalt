@@ -82,16 +82,6 @@ export default defineConfig({
           )
         ),
       },
-      // Transitional alias: bridges to the Three.js backend in legacy/apps/web.
-      // Remove once the renderer worker (src/renderer/) owns the frame loop.
-      {
-        find: "@web",
-        replacement: path.resolve(
-          fileURLToPath(
-            new URL("../../legacy/apps/web/src", import.meta.url)
-          )
-        ),
-      },
       {
         find: "$lib",
         replacement: path.resolve(
@@ -120,14 +110,8 @@ export default defineConfig({
     target: "esnext",
     rollupOptions: {
       output: {
-        // Each WASM package gets its own chunk so the browser can load them
-        // lazily and cache them independently. Without this, wasm-pack glue
-        // code and WASM binary imports land in the main bundle.
         manualChunks(id) {
-          if (id.includes("wasm_obj_loader"))    return "wasm-obj-loader";
-          if (id.includes("wasm_voxelizer"))     return "wasm-voxelizer";
-          if (id.includes("wasm_greedy_mesher")) return "wasm-greedy-mesher";
-          if (id.includes("wasm_webgpu_demo"))   return "wasm-webgpu-demo";
+          if (id.includes("wasm_renderer")) return "wasm-renderer";
         },
       },
     },

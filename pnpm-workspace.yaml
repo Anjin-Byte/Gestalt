@@ -4,3 +4,4 @@ packages:
   - "crates/*"
   - "legacy/apps/*"
   - "legacy/packages/*"
+  - "legacy/crates/*"

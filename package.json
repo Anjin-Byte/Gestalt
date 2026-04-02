@@ -3,19 +3,20 @@
   "private": true,
   "packageManager": "pnpm@9.12.2",
   "scripts": {
-    "dev": "pnpm -C apps/gestalt dev",
-    "dev:legacy": "pnpm -C legacy/apps/web dev",
-    "dev:legacy:full": "pnpm build:wasm:legacy && pnpm dev:legacy",
-    "build": "pnpm -C apps/gestalt build",
-    "build:legacy": "pnpm -C legacy/apps/web build",
-    "build:legacy:full": "pnpm build:wasm:legacy && pnpm build:legacy",
-    "build:wasm": "./scripts/build-wasm.sh gestalt",
-    "build:wasm:legacy": "./scripts/build-wasm.sh legacy",
-    "build:wasm:all": "./scripts/build-wasm.sh all",
-    "preview": "pnpm -C apps/gestalt preview",
-    "preview:legacy": "pnpm -C legacy/apps/web preview",
-    "test": "pnpm -C apps/gestalt test",
-    "test:e2e": "pnpm -C apps/gestalt test:e2e"
+    "dev":              "./scripts/v2/dev.sh",
+    "dev:legacy":       "./scripts/legacy/dev.sh",
+    "build":            "./scripts/v2/build.sh",
+    "build:legacy":     "./scripts/legacy/build.sh",
+    "build:wasm":       "./scripts/v2/wasm.sh",
+    "build:wasm:legacy":"./scripts/legacy/wasm.sh",
+    "build:wasm:all":   "./scripts/build-wasm.sh all",
+    "test":             "./scripts/v2/test.sh",
+    "test:legacy":      "./scripts/legacy/test.sh",
+    "clean":            "./scripts/clean.sh all",
+    "clean:v2":         "./scripts/clean.sh v2",
+    "clean:legacy":     "./scripts/clean.sh legacy",
+    "preview":          "pnpm -C apps/gestalt preview",
+    "preview:legacy":   "pnpm -C legacy/apps/web preview"
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.69"
