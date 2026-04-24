@@ -81,7 +81,7 @@ export const createVoxelChunkPipelineModule = (): TestbedModule => {
   let logger: ((msg: string) => void) | null = null;
 
   let sampleModels: SampleModel[] = defaultSampleModels;
-  let sampleId = sampleModels[0]?.id ?? "";
+  let sampleId = sampleModels.find((m) => m.id === "dragon")?.id ?? sampleModels[0]?.id ?? "";
   let sampleText = "";
   const sampleCache = new Map<string, string>();
   let ctxRef: ModuleContext | null = null;
