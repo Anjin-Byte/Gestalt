@@ -485,41 +485,48 @@ const FACE_NORMALS: [[f32; 3]; 6] = [
     [0.0, 0.0, -1.0],  // -Z
 ];
 
-/// Expand quads to vertices and indices.
-/// Positions are in padded voxel-space (add 1 to convert from usable to padded).
-/// World transform: `pos + chunk_coord * CS_P`.
-pub fn expand_quads(quads: &[Quad], chunk_coord: [i32; 3]) -> (Vec<u8>, Vec<u32>) {
+/// Expand quads to vertices and indices in world space.
+/// Applies voxel_size scaling and grid_origin offset.
+pub fn expand_quads(
+    quads: &[Quad],
+    chunk_coord: [i32; 3],
+    voxel_size: f32,
+    grid_origin: [f32; 3],
+) -> (Vec<u8>, Vec<u32>) {
     let mut vertices: Vec<u8> = Vec::with_capacity(quads.len() * 4 * VERTEX_BYTES as usize);
     let mut indices: Vec<u32> = Vec::with_capacity(quads.len() * 6);
     let mut vert_count = 0u32;
 
-    // World offset: chunk_coord * CS (usable stride, not padded).
-    // See: chunk-contract.md — "World origin of a chunk: coord * CS * voxel_size"
-    let world_off = [
-        chunk_coord[0] as f32 * CS as f32,
-        chunk_coord[1] as f32 * CS as f32,
-        chunk_coord[2] as f32 * CS as f32,
+    let vs = voxel_size;
+    // Global voxel base: chunk_coord * CS - 1 (integer).
+    // Vertex positions computed as f32(global_int) * vs + go to ensure
+    // bit-identical results at chunk boundaries (no seams).
+    let chunk_base = [
+        chunk_coord[0] * CS as i32 - 1,
+        chunk_coord[1] * CS as i32 - 1,
+        chunk_coord[2] * CS as i32 - 1,
     ];
 
     for q in quads {
         let [nx, ny, nz] = FACE_NORMALS[q.face];
         let nm = pack_normal_material(nx, ny, nz, q.material_id);
 
-        // Base position in padded coords (usable + 1 for padding offset)
-        let bx = world_off[0] + (q.x + 1) as f32;
-        let by = world_off[1] + (q.y + 1) as f32;
-        let bz = world_off[2] + (q.z + 1) as f32;
+        // Integer global voxel coordinate, then single float multiply
+        let bx = (chunk_base[0] + q.x as i32 + 1) as f32 * vs + grid_origin[0];
+        let by = (chunk_base[1] + q.y as i32 + 1) as f32 * vs + grid_origin[1];
+        let bz = (chunk_base[2] + q.z as i32 + 1) as f32 * vs + grid_origin[2];
 
-        let w = q.width as f32;
-        let h = q.height as f32;
+        let w = q.width as f32 * vs;
+        let h = q.height as f32 * vs;
 
-        // 4 corners depend on face direction
+        // 4 corners depend on face direction.
+        // The +vs offset on positive faces displaces the face to the far side of the voxel.
         let corners: [[f32; 3]; 4] = match q.face {
             FACE_POS_Y => [
-                [bx,     by + 1.0, bz],
-                [bx,     by + 1.0, bz + h],
-                [bx + w, by + 1.0, bz + h],
-                [bx + w, by + 1.0, bz],
+                [bx,     by + vs, bz],
+                [bx,     by + vs, bz + h],
+                [bx + w, by + vs, bz + h],
+                [bx + w, by + vs, bz],
             ],
             FACE_NEG_Y => [
                 [bx,     by, bz],
@@ -528,10 +535,10 @@ pub fn expand_quads(quads: &[Quad], chunk_coord: [i32; 3]) -> (Vec<u8>, Vec<u32>
                 [bx,     by, bz + h],
             ],
             FACE_POS_X => [
-                [bx + 1.0, by,     bz],
-                [bx + 1.0, by + w, bz],
-                [bx + 1.0, by + w, bz + h],
-                [bx + 1.0, by,     bz + h],
+                [bx + vs, by,     bz],
+                [bx + vs, by + w, bz],
+                [bx + vs, by + w, bz + h],
+                [bx + vs, by,     bz + h],
             ],
             FACE_NEG_X => [
                 [bx, by,     bz],
@@ -540,10 +547,10 @@ pub fn expand_quads(quads: &[Quad], chunk_coord: [i32; 3]) -> (Vec<u8>, Vec<u32>
                 [bx, by + w, bz],
             ],
             FACE_POS_Z => [
-                [bx,     by,     bz + 1.0],
-                [bx + w, by,     bz + 1.0],
-                [bx + w, by + h, bz + 1.0],
-                [bx,     by + h, bz + 1.0],
+                [bx,     by,     bz + vs],
+                [bx + w, by,     bz + vs],
+                [bx + w, by + h, bz + vs],
+                [bx,     by + h, bz + vs],
             ],
             FACE_NEG_Z => [
                 [bx,     by,     bz],
@@ -586,17 +593,21 @@ pub struct MeshResult {
 /// `palette`: packed u16 MaterialIds (2 per u32 word).
 /// `index_buf`: bitpacked per-voxel palette indices at `bpe` bit width.
 /// `palette_meta`: packed u32 (bits 0–15 = palette_size, bits 16–23 = bpe).
+/// `voxel_size`: world-space size of one voxel.
+/// `grid_origin`: world-space origin of the voxel grid.
 pub fn mesh_rebuild_cpu(
     occupancy: &[u32],
     palette: &[u32],
     index_buf: &[u32],
     palette_meta: u32,
     chunk_coord: [i32; 3],
+    voxel_size: f32,
+    grid_origin: [f32; 3],
 ) -> MeshResult {
     let bpe = (palette_meta >> 16) & 0xFF;
     let masks = cull_faces_cpu(occupancy);
     let quads = greedy_merge(occupancy, &masks, palette, index_buf, bpe);
-    let (vertices, indices) = expand_quads(&quads, chunk_coord);
+    let (vertices, indices) = expand_quads(&quads, chunk_coord, voxel_size, grid_origin);
 
     let vert_count = (vertices.len() / VERTEX_BYTES as usize) as u32;
     let idx_count = indices.len() as u32;
@@ -818,7 +829,7 @@ mod tests {
     fn single_voxel_vertex_counts() {
         let occ = occ_with_voxel(32, 32, 32);
         let (pal, idx, meta) = default_palette_data();
-        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0]);
+        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0], 1.0, [0.0; 3]);
         assert_eq!(result.draw_meta.vertex_count, 24, "6 quads × 4 verts = 24");
         assert_eq!(result.draw_meta.index_count, 36, "6 quads × 6 indices = 36");
         assert_eq!(result.quad_count, 6);
@@ -828,7 +839,7 @@ mod tests {
     fn vertex_positions_in_bounds() {
         let occ = occ_with_voxel(32, 32, 32);
         let (pal, idx, meta) = default_palette_data();
-        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0]);
+        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0], 1.0, [0.0; 3]);
         for i in 0..result.draw_meta.vertex_count as usize {
             let base = i * VERTEX_BYTES as usize;
             let px = f32::from_le_bytes(result.vertices[base..base + 4].try_into().unwrap());
@@ -844,7 +855,7 @@ mod tests {
     fn index_pattern_correct() {
         let occ = occ_with_voxel(32, 32, 32);
         let (pal, idx, meta) = default_palette_data();
-        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0]);
+        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0], 1.0, [0.0; 3]);
         for i in (0..result.indices.len()).step_by(6) {
             let b = result.indices[i];
             assert_eq!(result.indices[i + 1], b + 1);
@@ -859,7 +870,7 @@ mod tests {
     fn draw_meta_counts_match() {
         let occ = occ_with_voxel(32, 32, 32);
         let (pal, idx, meta) = default_palette_data();
-        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0]);
+        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0], 1.0, [0.0; 3]);
         assert_eq!(
             result.draw_meta.vertex_count as usize,
             result.vertices.len() / VERTEX_BYTES as usize
@@ -874,7 +885,7 @@ mod tests {
     fn empty_chunk_zero_output() {
         let occ = vec![0u32; OCCUPANCY_WORDS_PER_SLOT as usize];
         let (pal, idx, meta) = default_palette_data();
-        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0]);
+        let result = mesh_rebuild_cpu(&occ, &pal, &idx, meta, [0, 0, 0], 1.0, [0.0; 3]);
         assert_eq!(result.draw_meta.vertex_count, 0);
         assert_eq!(result.draw_meta.index_count, 0);
         assert_eq!(result.quad_count, 0);
@@ -890,7 +901,7 @@ mod tests {
         let meta = IndexBufBuilder::palette_meta(chunk.palette.len());
         let result = mesh_rebuild_cpu(
             chunk.occupancy.as_words(), &pal_words, &idx_words, meta,
-            [0, 0, 0],
+            [0, 0, 0], 1.0, [0.0; 3],
         );
         assert!(
             result.draw_meta.vertex_count <= MAX_VERTS_PER_CHUNK,
@@ -914,7 +925,7 @@ mod tests {
         let meta = IndexBufBuilder::palette_meta(chunk.palette.len());
         let result = mesh_rebuild_cpu(
             chunk.occupancy.as_words(), &pal_words, &idx_words, meta,
-            [0, 0, 0],
+            [0, 0, 0], 1.0, [0.0; 3],
         );
         // The room + sphere + emissive should produce a nontrivial mesh
         assert!(result.quad_count > 100, "too few quads: {}", result.quad_count);
@@ -1057,6 +1068,7 @@ f 1 4 8 5
                 &idx_words,
                 meta,
                 [chunk.coord.x, chunk.coord.y, chunk.coord.z],
+                1.0, [0.0; 3],
             );
 
             let masks = cull_faces_cpu(chunk.occupancy.as_words());
@@ -1139,6 +1151,7 @@ f 1 4 8 5
             let mesh = mesh_rebuild_cpu(
                 chunk.occupancy.as_words(), &pal_words, &idx_words, meta,
                 [chunk.coord.x, chunk.coord.y, chunk.coord.z],
+                1.0, [0.0; 3],
             );
     
             let verts = &mesh.vertices;
@@ -1339,6 +1352,7 @@ f 1 4 8 5
             let mesh = mesh_rebuild_cpu(
                 chunk.occupancy.as_words(), &pal_words, &idx_words, meta,
                 [chunk.coord.x, chunk.coord.y, chunk.coord.z],
+                1.0, [0.0; 3],
             );
 
             println!("\nChunk ({},{},{}):", chunk.coord.x, chunk.coord.y, chunk.coord.z);

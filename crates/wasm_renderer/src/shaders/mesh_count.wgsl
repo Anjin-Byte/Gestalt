@@ -25,7 +25,6 @@ const FACE_NEG_Z: u32 = 5u;
 const USABLE_MASK_LO: u32 = 0xFFFFFFFFu;
 const USABLE_MASK_HI: u32 = 0x3FFFFFFFu;
 
-const INDEX_BUF_WORDS_PER_SLOT: u32 = 65536u;
 const PALETTE_WORDS_PER_SLOT: u32 = 128u;
 
 // ─── Bindings ───────────────────────────────────────────────────────────
@@ -94,7 +93,7 @@ fn read_material_id(slot: u32, px: u32, py: u32, pz: u32, bpe: u32) -> u32 {
     let word_index = bit_offset >> 5u;
     let bit_within = bit_offset & 31u;
     let mask = (1u << bpe) - 1u;
-    let slot_base = slot * INDEX_BUF_WORDS_PER_SLOT;
+    let slot_base = palette_meta[slot * 2u + 1u]; // index_buf_word_offset
     let palette_idx = (index_buf_pool[slot_base + word_index] >> bit_within) & mask;
     let pal_base = slot * PALETTE_WORDS_PER_SLOT;
     let pal_word = palette[pal_base + (palette_idx >> 1u)];
@@ -140,7 +139,7 @@ fn main(
     if slice >= CS { return; }
 
     let slot_offset = slot * WORDS_PER_SLOT;
-    let bpe = (palette_meta[slot] >> 16u) & 0xFFu;
+    let bpe = (palette_meta[slot * 2u] >> 16u) & 0xFFu;
 
     bitmap_clear(&processed);
     bitmap_clear(&visible);

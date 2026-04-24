@@ -1,6 +1,6 @@
 <script lang="ts">
   import {
-    Section, ToggleGroup, StatusIndicator, PropRow,
+    Section, ToggleGroup, SelectField, StatusIndicator, PropRow,
     BarMeter, DiffRow, ScrubField, CheckboxRow, CounterRow,
     BitField, ActionButton, Slider,
   } from "@gestalt/phi";
@@ -9,6 +9,7 @@
   import { frameTimeline } from "$lib/stores/timeline";
   import type { FrameSample } from "$lib/stores/timeline";
   import * as RC from "../../../renderer/RendererController";
+  import { orbitReset } from "$lib/stores/orbitReset";
 
   // ─── Model loading ─────────────────────────────────────────────────────
 
@@ -29,7 +30,8 @@
     loadingModel = true;
     try {
       const text = await file.text();
-      RC.loadModel(text, voxelResolution);
+      const info = RC.loadModel(text, voxelResolution);
+      orbitReset.set({ center: info.center, extent: info.extent });
     } catch (err: any) {
       loadError = err?.message ?? String(err);
       console.error("[InspectorPanel] OBJ load error:", err);
@@ -42,6 +44,23 @@
   // ─── CPU mesh toggle ───────────────────────────────────────────────────
 
   let cpuMeshEnabled = $state(false);
+  let freezeCullEnabled = $state(false);
+  let frustumCullEnabled = $state(true);
+  let hizCullEnabled = $state(true);
+  let giEnabled = $state(false);
+  let giBackendMode = $state("2"); // default: v3 world-space
+
+  const giBackendOptions = [
+    { value: "0", label: "Off" },
+    { value: "1", label: "V2 Legacy" },
+    { value: "2", label: "V3 World-Space" },
+  ];
+
+  function onGiBackendChange(v: string) {
+    giBackendMode = v;
+    RC.setGiBackend(parseInt(v, 10));
+    giEnabled = v !== "0";
+  }
 
   // ─── Render mode (ToggleGroup) ────────────────────────────────────────
 
@@ -50,6 +69,14 @@
     { value: "2",  label: "Wire" },
     { value: "4",  label: "Normals" },
     { value: "16", label: "Depth" },
+    { value: "32", label: "GI Atlas" },
+    { value: "33", label: "GI Hits" },
+    { value: "34", label: "GI Only" },
+    { value: "35", label: "GI Atlas B" },
+    { value: "36", label: "GI Normals" },
+    { value: "37", label: "World Pos" },
+    { value: "38", label: "Raw Texel" },
+    { value: "39", label: "Single Dir" },
   ];
 
   let currentMode = $state("0");
@@ -140,11 +167,10 @@
 </Section>
 
 <Section sectionId="inspector-mode" title="RENDER MODE">
-  <ToggleGroup
+  <SelectField
     options={modeOptions}
     value={currentMode}
     onValueChange={onModeChange}
-    label="Render mode"
   />
   <div class="status-row">
     <StatusIndicator
@@ -216,6 +242,35 @@
       cpuMeshEnabled = v;
       RC.setUseCpuMesh(v);
     }}
+  />
+  <CheckboxRow
+    label="Freeze Cull (debug R-4)"
+    checked={freezeCullEnabled}
+    onchange={(v) => {
+      freezeCullEnabled = v;
+      RC.setFreezeCull(v);
+    }}
+  />
+  <CheckboxRow
+    label="Frustum Cull"
+    checked={frustumCullEnabled}
+    onchange={(v) => {
+      frustumCullEnabled = v;
+      RC.setFrustumCullEnabled(v);
+    }}
+  />
+  <CheckboxRow
+    label="Hi-Z Occlusion Cull (R-4)"
+    checked={hizCullEnabled}
+    onchange={(v) => {
+      hizCullEnabled = v;
+      RC.setHizCullEnabled(v);
+    }}
+  />
+  <SelectField
+    options={giBackendOptions}
+    value={giBackendMode}
+    onValueChange={onGiBackendChange}
   />
 </Section>
 

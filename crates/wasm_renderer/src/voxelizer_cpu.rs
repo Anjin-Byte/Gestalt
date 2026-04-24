@@ -13,10 +13,18 @@ use crate::obj_parser::ParsedObj;
 use crate::pool::*;
 use crate::scene::{ChunkData, IndexBufBuilder, MaterialEntry, OccupancyBuilder, PaletteBuilder};
 
-/// Result of voxelization: chunk data ready for upload + material table.
+/// Result of voxelization: chunk data ready for upload + material table + scene params.
 pub struct VoxelizeResult {
     pub chunks: Vec<ChunkData>,
     pub materials: Vec<MaterialEntry>,
+    /// Size of one voxel in world units. world_pos = grid_pos * voxel_size + grid_origin.
+    pub voxel_size: f32,
+    /// World-space origin of the voxel grid. Derived from mesh AABB.
+    pub grid_origin: [f32; 3],
+    /// World-space center of the source mesh.
+    pub mesh_center: [f32; 3],
+    /// Longest axis of the source mesh in world units.
+    pub mesh_extent: f32,
 }
 
 /// Voxelize a parsed OBJ mesh into chunk data.
@@ -35,6 +43,10 @@ pub fn voxelize(parsed: &ParsedObj, resolution: u32) -> VoxelizeResult {
         return VoxelizeResult {
             chunks: Vec::new(),
             materials: build_material_table(parsed),
+            voxel_size: 1.0,
+            grid_origin: [0.0; 3],
+            mesh_center: [0.0; 3],
+            mesh_extent: 0.0,
         };
     }
 
@@ -112,9 +124,14 @@ pub fn voxelize(parsed: &ParsedObj, resolution: u32) -> VoxelizeResult {
     // Sort by coord for deterministic output
     chunks.sort_by_key(|c| (c.coord.x, c.coord.y, c.coord.z));
 
+    let center = (mesh_min + mesh_max) * 0.5;
     VoxelizeResult {
         chunks,
         materials: build_material_table(parsed),
+        voxel_size,
+        grid_origin: [grid_origin.x, grid_origin.y, grid_origin.z],
+        mesh_center: [center.x, center.y, center.z],
+        mesh_extent: longest,
     }
 }
 

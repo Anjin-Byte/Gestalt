@@ -2,6 +2,7 @@
 
 pub mod build_indirect;
 pub mod build_wireframe;
+pub mod frustum_cull;
 pub mod hiz_build;
 pub mod mesh_count;
 pub mod mesh_rebuild;

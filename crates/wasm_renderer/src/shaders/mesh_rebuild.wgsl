@@ -37,6 +37,7 @@ const USABLE_MASK_HI: u32 = 0x3FFFFFFFu;  // bits 0..29 (total 62 bits)
 @group(0) @binding(5) var<storage, read_write> mesh_offset_table:  array<atomic<u32>>;
 @group(0) @binding(6) var<storage, read>       index_buf_pool:     array<u32>;
 @group(0) @binding(7) var<storage, read>       palette_meta:       array<u32>;
+@group(0) @binding(8) var<uniform>             scene_params:       vec4f; // xyz=grid_origin, w=voxel_size
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -122,19 +123,18 @@ fn get_neighbor(slot_offset: u32, x: u32, z: u32, face: u32) -> vec2u {
 // Resolves global MaterialId for a voxel from bitpacked index_buf → palette.
 // See: docs/Resident Representation/material-aware-merge.md
 
-const INDEX_BUF_WORDS_PER_SLOT: u32 = 65536u;  // CS_P³ * 8 / 32
 const PALETTE_WORDS_PER_SLOT: u32 = 128u;      // 256 entries / 2 per u32
 
 // Resolve global MaterialId for a voxel at padded coords (px, py, pz).
 // bpe (bits_per_entry) must be 1, 2, 4, or 8. Entries never span u32 words (IDX-1).
 fn read_material_id(slot: u32, px: u32, py: u32, pz: u32, bpe: u32) -> u32 {
-    // Decode palette index from bitpacked index buffer
+    // Decode palette index from bitpacked index buffer (variable allocation)
     let voxel_index = px * 4096u + py * 64u + pz;
     let bit_offset = voxel_index * bpe;
     let word_index = bit_offset >> 5u;
     let bit_within = bit_offset & 31u;
     let mask = (1u << bpe) - 1u;
-    let slot_base = slot * INDEX_BUF_WORDS_PER_SLOT;
+    let slot_base = palette_meta[slot * 2u + 1u]; // index_buf_word_offset from palette_meta
     let palette_idx = (index_buf_pool[slot_base + word_index] >> bit_within) & mask;
 
     // Resolve global MaterialId from palette
@@ -222,14 +222,16 @@ fn main(
 
     let slot_offset = slot * WORDS_PER_SLOT;
     let chunk_coord = coord[slot];
-    // World offset: chunk_coord * CS (usable stride, not padded).
-    // Chunks tile at 62-voxel intervals. The 1-voxel padding on each side
-    // overlaps with neighbors — this is the boundary copy convention.
-    // See: chunk-contract.md — "World origin of a chunk: coord * CS * voxel_size"
-    let world_off = vec3f(
-        f32(chunk_coord.x) * f32(CS),
-        f32(chunk_coord.y) * f32(CS),
-        f32(chunk_coord.z) * f32(CS),
+    let vs = scene_params.w;   // voxel_size
+    let go = scene_params.xyz; // grid_origin
+    // Global voxel base: chunk_coord * CS - 1.
+    // Vertex positions are computed as f32(global_int) * vs + go to ensure
+    // identical floating-point results at chunk boundaries (no seams).
+    // See: docs/Resident Representation/chunk-world-offset-analysis.md
+    let chunk_base = vec3i(
+        chunk_coord.x * i32(CS) - 1,
+        chunk_coord.y * i32(CS) - 1,
+        chunk_coord.z * i32(CS) - 1,
     );
 
     // Per-slot vertex/index pool offsets (variable allocation from prefix sum)
@@ -243,7 +245,8 @@ fn main(
     let slot_idx_base = alloc_idx_offset;
 
     // Read bits_per_entry once per thread (uniform across all voxels in the slot).
-    let bpe = (palette_meta[slot] >> 16u) & 0xFFu;
+    // palette_meta is 2 × u32 per slot: [0]=palette_size|bpe|reserved, [1]=index_buf_offset
+    let bpe = (palette_meta[slot * 2u] >> 16u) & 0xFFu;
 
     bitmap_clear(&processed);
     bitmap_clear(&visible);
@@ -358,79 +361,94 @@ fn main(
                 continue;
             }
 
-            // Compute world-space quad corners
-            // Map (slice, primary, secondary, width, height) to (bx, by, bz, w_dim, h_dim)
-            var bx: f32; var by: f32; var bz: f32;
-            var w: f32; var h: f32;
+            // Compute world-space quad corners.
+            // EVERY vertex is computed from its own integer global coordinate:
+            //   world = f32(chunk_base + local_int) * vs + go
+            // This ensures vertices at chunk boundaries are bit-identical (no seams).
+            // We never add float width/height offsets — each corner is independent.
 
-            // Base position: usable coord + 1 (padding) + world offset
+            let cb = chunk_base;
+            let p1 = i32(primary + 1u);
+            let s1 = i32(secondary + 1u);
+            let sl1 = i32(slice + 1u);
+            let wi = i32(width);
+            let hi = i32(height);
+
+            // Helper: convert integer global voxel coord to world float
+            // Inlined per-axis to avoid struct overhead in the hot loop.
+
             switch face {
-                case 0u: { // +Y: y=slice, sweep X(w)×Z(h)
-                    bx = world_off.x + f32(primary + 1u);
-                    by = world_off.y + f32(slice + 1u) + 1.0;
-                    bz = world_off.z + f32(secondary + 1u);
-                    w = f32(width); h = f32(height);
-                    // Corners: [bx, by, bz], [bx, by, bz+h], [bx+w, by, bz+h], [bx+w, by, bz]
+                case 0u: { // +Y: face at y=slice+2, sweep X(w)×Z(h)
+                    let x0 = f32(cb.x + p1) * vs + go.x;
+                    let x1 = f32(cb.x + p1 + wi) * vs + go.x;
+                    let y0 = f32(cb.y + sl1 + 1) * vs + go.y;
+                    let z0 = f32(cb.z + s1) * vs + go.z;
+                    let z1 = f32(cb.z + s1 + hi) * vs + go.z;
                     let vb = slot_vert_base + vert_claim * VERTEX_STRIDE;
-                    write_vertex(vb,              bx,     by, bz,     nm);
-                    write_vertex(vb + 4u,         bx,     by, bz + h, nm);
-                    write_vertex(vb + 8u,         bx + w, by, bz + h, nm);
-                    write_vertex(vb + 12u,        bx + w, by, bz,     nm);
+                    write_vertex(vb,       x0, y0, z0, nm);
+                    write_vertex(vb + 4u,  x0, y0, z1, nm);
+                    write_vertex(vb + 8u,  x1, y0, z1, nm);
+                    write_vertex(vb + 12u, x1, y0, z0, nm);
                 }
-                case 1u: { // -Y: y=slice, sweep X(w)×Z(h)
-                    bx = world_off.x + f32(primary + 1u);
-                    by = world_off.y + f32(slice + 1u);
-                    bz = world_off.z + f32(secondary + 1u);
-                    w = f32(width); h = f32(height);
+                case 1u: { // -Y: face at y=slice+1, sweep X(w)×Z(h)
+                    let x0 = f32(cb.x + p1) * vs + go.x;
+                    let x1 = f32(cb.x + p1 + wi) * vs + go.x;
+                    let y0 = f32(cb.y + sl1) * vs + go.y;
+                    let z0 = f32(cb.z + s1) * vs + go.z;
+                    let z1 = f32(cb.z + s1 + hi) * vs + go.z;
                     let vb = slot_vert_base + vert_claim * VERTEX_STRIDE;
-                    write_vertex(vb,              bx,     by, bz,     nm);
-                    write_vertex(vb + 4u,         bx + w, by, bz,     nm);
-                    write_vertex(vb + 8u,         bx + w, by, bz + h, nm);
-                    write_vertex(vb + 12u,        bx,     by, bz + h, nm);
+                    write_vertex(vb,       x0, y0, z0, nm);
+                    write_vertex(vb + 4u,  x1, y0, z0, nm);
+                    write_vertex(vb + 8u,  x1, y0, z1, nm);
+                    write_vertex(vb + 12u, x0, y0, z1, nm);
                 }
-                case 2u: { // +X: x=slice, sweep Y(w)×Z(h)
-                    bx = world_off.x + f32(slice + 1u) + 1.0;
-                    by = world_off.y + f32(primary + 1u);
-                    bz = world_off.z + f32(secondary + 1u);
-                    w = f32(width); h = f32(height);
+                case 2u: { // +X: face at x=slice+2, sweep Y(w)×Z(h)
+                    let x0 = f32(cb.x + sl1 + 1) * vs + go.x;
+                    let y0 = f32(cb.y + p1) * vs + go.y;
+                    let y1 = f32(cb.y + p1 + wi) * vs + go.y;
+                    let z0 = f32(cb.z + s1) * vs + go.z;
+                    let z1 = f32(cb.z + s1 + hi) * vs + go.z;
                     let vb = slot_vert_base + vert_claim * VERTEX_STRIDE;
-                    write_vertex(vb,              bx, by,     bz,     nm);
-                    write_vertex(vb + 4u,         bx, by + w, bz,     nm);
-                    write_vertex(vb + 8u,         bx, by + w, bz + h, nm);
-                    write_vertex(vb + 12u,        bx, by,     bz + h, nm);
+                    write_vertex(vb,       x0, y0, z0, nm);
+                    write_vertex(vb + 4u,  x0, y1, z0, nm);
+                    write_vertex(vb + 8u,  x0, y1, z1, nm);
+                    write_vertex(vb + 12u, x0, y0, z1, nm);
                 }
-                case 3u: { // -X: x=slice, sweep Y(w)×Z(h)
-                    bx = world_off.x + f32(slice + 1u);
-                    by = world_off.y + f32(primary + 1u);
-                    bz = world_off.z + f32(secondary + 1u);
-                    w = f32(width); h = f32(height);
+                case 3u: { // -X: face at x=slice+1, sweep Y(w)×Z(h)
+                    let x0 = f32(cb.x + sl1) * vs + go.x;
+                    let y0 = f32(cb.y + p1) * vs + go.y;
+                    let y1 = f32(cb.y + p1 + wi) * vs + go.y;
+                    let z0 = f32(cb.z + s1) * vs + go.z;
+                    let z1 = f32(cb.z + s1 + hi) * vs + go.z;
                     let vb = slot_vert_base + vert_claim * VERTEX_STRIDE;
-                    write_vertex(vb,              bx, by,     bz,     nm);
-                    write_vertex(vb + 4u,         bx, by,     bz + h, nm);
-                    write_vertex(vb + 8u,         bx, by + w, bz + h, nm);
-                    write_vertex(vb + 12u,        bx, by + w, bz,     nm);
+                    write_vertex(vb,       x0, y0, z0, nm);
+                    write_vertex(vb + 4u,  x0, y0, z1, nm);
+                    write_vertex(vb + 8u,  x0, y1, z1, nm);
+                    write_vertex(vb + 12u, x0, y1, z0, nm);
                 }
-                case 4u: { // +Z: z=slice, sweep X(w)×Y(h)
-                    bx = world_off.x + f32(primary + 1u);
-                    by = world_off.y + f32(secondary + 1u);
-                    bz = world_off.z + f32(slice + 1u) + 1.0;
-                    w = f32(width); h = f32(height);
+                case 4u: { // +Z: face at z=slice+2, sweep X(w)×Y(h)
+                    let x0 = f32(cb.x + p1) * vs + go.x;
+                    let x1 = f32(cb.x + p1 + wi) * vs + go.x;
+                    let y0 = f32(cb.y + s1) * vs + go.y;
+                    let y1 = f32(cb.y + s1 + hi) * vs + go.y;
+                    let z0 = f32(cb.z + sl1 + 1) * vs + go.z;
                     let vb = slot_vert_base + vert_claim * VERTEX_STRIDE;
-                    write_vertex(vb,              bx,     by,     bz, nm);
-                    write_vertex(vb + 4u,         bx + w, by,     bz, nm);
-                    write_vertex(vb + 8u,         bx + w, by + h, bz, nm);
-                    write_vertex(vb + 12u,        bx,     by + h, bz, nm);
+                    write_vertex(vb,       x0, y0, z0, nm);
+                    write_vertex(vb + 4u,  x1, y0, z0, nm);
+                    write_vertex(vb + 8u,  x1, y1, z0, nm);
+                    write_vertex(vb + 12u, x0, y1, z0, nm);
                 }
-                default: { // -Z: z=slice, sweep X(w)×Y(h)
-                    bx = world_off.x + f32(primary + 1u);
-                    by = world_off.y + f32(secondary + 1u);
-                    bz = world_off.z + f32(slice + 1u);
-                    w = f32(width); h = f32(height);
+                default: { // -Z: face at z=slice+1, sweep X(w)×Y(h)
+                    let x0 = f32(cb.x + p1) * vs + go.x;
+                    let x1 = f32(cb.x + p1 + wi) * vs + go.x;
+                    let y0 = f32(cb.y + s1) * vs + go.y;
+                    let y1 = f32(cb.y + s1 + hi) * vs + go.y;
+                    let z0 = f32(cb.z + sl1) * vs + go.z;
                     let vb = slot_vert_base + vert_claim * VERTEX_STRIDE;
-                    write_vertex(vb,              bx,     by,     bz, nm);
-                    write_vertex(vb + 4u,         bx,     by + h, bz, nm);
-                    write_vertex(vb + 8u,         bx + w, by + h, bz, nm);
-                    write_vertex(vb + 12u,        bx + w, by,     bz, nm);
+                    write_vertex(vb,       x0, y0, z0, nm);
+                    write_vertex(vb + 4u,  x0, y1, z0, nm);
+                    write_vertex(vb + 8u,  x1, y1, z0, nm);
+                    write_vertex(vb + 12u, x1, y0, z0, nm);
                 }
             }
 

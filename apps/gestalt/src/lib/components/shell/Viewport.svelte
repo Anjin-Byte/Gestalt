@@ -4,16 +4,28 @@
 
   let containerEl: HTMLDivElement;
 
+  import { orbitReset } from "$lib/stores/orbitReset";
+
   // Orbit camera state
   let orbitYaw = -0.7;
   let orbitPitch = 0.4;
   let orbitDist = 120;
-  const target = [32, 32, 32];
+  let target = [32, 32, 32];
   let dragging = false;
+
+  // Subscribe to orbit reset signals (fired after model load)
+  $effect(() => {
+    return orbitReset.subscribe((reset) => {
+      if (!reset) return;
+      target = [reset.center[0], reset.center[1], reset.center[2]];
+      orbitDist = reset.extent * 1.8;
+      sendCamera();
+    });
+  });
 
   function sendCamera() {
     orbitPitch = Math.max(-1.5, Math.min(1.5, orbitPitch));
-    orbitDist = Math.max(10, Math.min(500, orbitDist));
+    orbitDist = Math.max(0.1, orbitDist);
 
     const cp = Math.cos(orbitPitch);
     const sp = Math.sin(orbitPitch);
@@ -52,7 +64,8 @@
 
   function onWheel(e: WheelEvent) {
     e.preventDefault();
-    orbitDist += e.deltaY * 0.1;
+    // Zoom proportional to current distance for consistent feel at any scale
+    orbitDist *= 1 + e.deltaY * 0.001;
     sendCamera();
   }
 

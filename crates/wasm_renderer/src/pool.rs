@@ -48,25 +48,19 @@ pub const OCCUPANCY_WORDS_PER_SLOT: u32 = COLUMNS_PER_CHUNK * 2;
 /// Bytes per slot in the occupancy atlas.
 pub const OCCUPANCY_BYTES_PER_SLOT: u32 = OCCUPANCY_WORDS_PER_SLOT * 4;
 
-/// Max palette entries per chunk. Capped at 16 (bpe=4) to keep index_buf under 512 MB
-/// at 4096 slots. Full 256-entry support requires variable index_buf allocation.
-pub const MAX_PALETTE_ENTRIES: u32 = 16;
+/// Max palette entries per chunk. Variable index_buf allocation supports full 256.
+pub const MAX_PALETTE_ENTRIES: u32 = 256;
 pub const PALETTE_WORDS_PER_SLOT: u32 = MAX_PALETTE_ENTRIES / 2;
 /// Bytes per slot for palette.
 pub const PALETTE_BYTES_PER_SLOT: u32 = PALETTE_WORDS_PER_SLOT * 4;
 
-/// Per-voxel palette index buffer — allocated at bpe=4 (supports up to 16 palette entries).
-/// 262144 voxels × 4 bits / 32 bits per word = 32768 words.
-/// Chunks with >16 materials use bpe=4 and clamp palette to 16 entries.
-/// Full bpe=8 support (256 entries) requires variable index_buf allocation (future).
-pub const INDEX_BUF_MAX_BPE: u32 = 4;
-pub const INDEX_BUF_WORDS_PER_SLOT: u32 = CS_P3 * INDEX_BUF_MAX_BPE / 32;
-/// Bytes per slot for index buffer.
-pub const INDEX_BUF_BYTES_PER_SLOT: u32 = INDEX_BUF_WORDS_PER_SLOT * 4;
+/// Index buffer shared pool capacity (variable allocation — WebGPU max buffer size).
+pub const INDEX_BUF_POOL_CAPACITY: u64 = 536_870_912; // 512 MB
 
-/// Palette metadata: 1 u32 per slot.
-/// Bits 0–15: palette_size (u16). Bits 16–23: bits_per_entry (u8). Bits 24–31: reserved.
-pub const PALETTE_META_BYTES: u32 = 4;
+/// Palette metadata: 2 × u32 per slot = 8 bytes.
+///   [0]: palette_size (u16) | bits_per_entry (u8) | reserved (u8)
+///   [1]: index_buf_word_offset into the shared pool
+pub const PALETTE_META_BYTES: u32 = 8;
 
 /// Chunk coordinate: vec4i = 16 bytes.
 pub const COORD_BYTES: u32 = 16;
@@ -95,15 +89,32 @@ pub const INDEX_BYTES: u32 = 4;
 // ─── Mesh pool budget (variable allocation) ───────────────────────────────
 // See: docs/Resident Representation/variable-mesh-pool.md
 
-/// Total vertex pool capacity (shared across all slots).
-pub const MESH_VERTEX_POOL_CAPACITY: u32 = 4_194_304; // 4M vertices
-/// Total index pool capacity (shared across all slots).
-pub const MESH_INDEX_POOL_CAPACITY: u32 = 6_291_456; // 6M indices
+/// Total vertex pool capacity — maxed to WebGPU buffer limit (512 MB / 16 B per vertex).
+pub const MESH_VERTEX_POOL_CAPACITY: u32 = 33_554_432; // 32M vertices = 512 MB
+/// Total index pool capacity — maxed to WebGPU buffer limit (512 MB / 4 B per index).
+pub const MESH_INDEX_POOL_CAPACITY: u32 = 134_217_728; // 128M indices = 512 MB
 
 /// Mesh offset table entry: 20 bytes per slot (5 × u32: vertex_offset, vertex_count, index_offset, index_count, write_counter).
 pub const MESH_OFFSET_ENTRY_BYTES: u32 = 20;
 /// Mesh counts buffer: 4 bytes per slot (u32 quad count, written by count pass).
 pub const MESH_COUNTS_ENTRY_BYTES: u32 = 4;
+
+/// Scene params uniform: vec4f = 16 bytes (grid_origin.xyz, voxel_size).
+pub const SCENE_PARAMS_BYTES: u32 = 16;
+
+// ─── GPU slot table (coord→slot lookup for DDA traversal) ────────────────
+
+/// Slot table grid dimension per axis. Covers chunk coords in [-DIM/2, DIM/2).
+pub const SLOT_TABLE_DIM: u32 = 32;
+/// Total entries in the flat 3D slot table.
+pub const SLOT_TABLE_ENTRIES: u32 = SLOT_TABLE_DIM * SLOT_TABLE_DIM * SLOT_TABLE_DIM;
+/// Bytes for the slot table buffer (one u32 per entry).
+pub const SLOT_TABLE_BYTES: u64 = SLOT_TABLE_ENTRIES as u64 * 4;
+/// Slot table params uniform: origin.xyz (i32×3) + dim (u32) = 16 bytes.
+pub const SLOT_TABLE_PARAMS_BYTES: u64 = 16;
+/// Sentinel value indicating no chunk at a slot table entry.
+pub const SLOT_TABLE_SENTINEL: u32 = 0xFFFFFFFF;
+
 
 // ─── Wireframe (still fixed allocation, to be variablized in Phase 5) ─────
 
@@ -135,8 +146,8 @@ pub const MATERIAL_ENTRY_BYTES: u32 = 16;
 pub const TOTAL_OCCUPANCY_BYTES: u64 = OCCUPANCY_BYTES_PER_SLOT as u64 * MAX_SLOTS as u64;
 /// Total palette buffer size for all slots.
 pub const TOTAL_PALETTE_BYTES: u64 = PALETTE_BYTES_PER_SLOT as u64 * MAX_SLOTS as u64;
-/// Total index buffer pool size for all slots.
-pub const TOTAL_INDEX_BUF_BYTES: u64 = INDEX_BUF_BYTES_PER_SLOT as u64 * MAX_SLOTS as u64;
+/// Total index buffer pool size (shared budget, not per-slot).
+pub const TOTAL_INDEX_BUF_BYTES: u64 = INDEX_BUF_POOL_CAPACITY;
 /// Total palette metadata buffer size for all slots.
 pub const TOTAL_PALETTE_META_BYTES: u64 = PALETTE_META_BYTES as u64 * MAX_SLOTS as u64;
 /// Total vertex pool size (budget-based, not per-slot × MAX).
@@ -191,7 +202,7 @@ const _: () = assert!(BRICKLETS_PER_CHUNK == 64, "Must have 64 bricklets per chu
 const _: () = assert!(SUMMARY_WORDS_PER_SLOT * 32 >= BRICKLETS_PER_CHUNK * BRICKLETS_PER_AXIS,
     "Summary must have enough bits for all bricklets (8^3 = 512)");
 const _: () = assert!(MAX_PALETTE_ENTRIES <= 256, "Palette limited to 256 entries (8-bit index max)");
-const _: () = assert!(PALETTE_BYTES_PER_SLOT == 32, "Fixed palette allocation must be 32 bytes (16 entries × 2 bytes, packed 2 per u32 = 8 words × 4)");
+const _: () = assert!(PALETTE_BYTES_PER_SLOT == 512, "Palette allocation: 256 entries × 2 bytes, packed 2 per u32 = 128 words × 4 = 512 bytes");
 const _: () = assert!(MATERIAL_ENTRY_BYTES == 16, "MaterialEntry must be 16 bytes (4 × u32 packed f16)");
 const _: () = assert!(TOTAL_MATERIAL_BYTES == 65536, "Material table must be 64 KB");
 const _: () = assert!(MAX_VERTS_PER_CHUNK % 4 == 0, "MAX_VERTS must be multiple of 4 (quad vertices)");
@@ -333,6 +344,39 @@ impl SlotAllocator {
         self.slot_to_coord.iter().enumerate().filter_map(|(slot, coord)| {
             coord.map(|c| (slot as u32, c))
         })
+    }
+}
+
+// ─── Index buffer bump allocator ──────────────────────────────────────────
+
+/// CPU-side bump allocator for the shared index_buf pool.
+/// Reset on scene load. Allocates sequentially — zero fragmentation for batch loads.
+pub struct IndexBufAllocator {
+    head: u32, // next free word offset
+}
+
+impl IndexBufAllocator {
+    pub fn new() -> Self {
+        Self { head: 0 }
+    }
+
+    pub fn reset(&mut self) {
+        self.head = 0;
+    }
+
+    /// Allocate `words` from the pool. Returns the word offset.
+    pub fn alloc(&mut self, words: u32) -> u32 {
+        let offset = self.head;
+        self.head += words;
+        offset
+    }
+
+    pub fn total_words(&self) -> u32 {
+        self.head
+    }
+
+    pub fn total_bytes(&self) -> u64 {
+        self.head as u64 * 4
     }
 }
 

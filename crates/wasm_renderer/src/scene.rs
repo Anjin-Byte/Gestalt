@@ -87,9 +87,7 @@ impl PaletteBuilder {
             return pos as u8;
         }
         if self.entries.len() >= MAX_PALETTE_ENTRIES as usize {
-            // Palette full — map to MATERIAL_DEFAULT (index 0 which is MATERIAL_EMPTY,
-            // or index 1 if present). This is a lossy fallback until variable index_buf
-            // allocation supports bpe=8 (256 entries).
+            // Palette full (256 entries). Map overflow to entry 0.
             return 0;
         }
         self.entries.push(material_id);
@@ -269,6 +267,14 @@ pub const MAT_STONE: u16 = 2;
 pub const MAT_BLUE: u16 = 3;
 pub const MAT_EMISSIVE: u16 = 4;
 
+// Cornell box materials
+pub const MAT_WHITE: u16 = 5;
+pub const MAT_RED: u16 = 6;
+pub const MAT_GREEN: u16 = 7;
+pub const MAT_LIGHT: u16 = 8;       // bright ceiling light
+pub const MAT_GOLD: u16 = 9;        // smooth metallic-look
+pub const MAT_ROUGH_GRAY: u16 = 10; // rough matte
+
 /// Build the global material table for the test scene.
 pub fn test_scene_materials() -> Vec<MaterialEntry> {
     let mut table = vec![MaterialEntry::new([0.0; 3], 0.0, [0.0; 3], 0.0); MAX_MATERIALS as usize];
@@ -288,6 +294,121 @@ pub fn test_scene_materials() -> Vec<MaterialEntry> {
         MaterialEntry::new([1.0, 0.9, 0.3], 0.2, [2.0, 1.8, 0.5], 1.0);
 
     table
+}
+
+/// Build the material table for the Cornell box test scene.
+pub fn cornell_box_materials() -> Vec<MaterialEntry> {
+    let mut table = vec![MaterialEntry::new([0.0; 3], 0.0, [0.0; 3], 0.0); MAX_MATERIALS as usize];
+
+    table[MATERIAL_DEFAULT as usize] = MaterialEntry::new([0.5, 0.5, 0.5], 0.5, [0.0; 3], 1.0);
+    // White walls/floor/ceiling
+    table[MAT_WHITE as usize] = MaterialEntry::new([0.73, 0.73, 0.73], 0.9, [0.0; 3], 1.0);
+    // Red left wall
+    table[MAT_RED as usize] = MaterialEntry::new([0.65, 0.05, 0.05], 0.9, [0.0; 3], 1.0);
+    // Green right wall
+    table[MAT_GREEN as usize] = MaterialEntry::new([0.12, 0.45, 0.15], 0.9, [0.0; 3], 1.0);
+    // Ceiling light — bright emissive
+    table[MAT_LIGHT as usize] = MaterialEntry::new([1.0, 1.0, 1.0], 0.1, [8.0, 7.0, 5.0], 1.0);
+    // Gold — smooth, warm
+    table[MAT_GOLD as usize] = MaterialEntry::new([0.83, 0.69, 0.22], 0.15, [0.0; 3], 1.0);
+    // Rough gray — matte concrete look
+    table[MAT_ROUGH_GRAY as usize] = MaterialEntry::new([0.4, 0.4, 0.4], 0.95, [0.0; 3], 1.0);
+
+    table
+}
+
+/// Generate a Cornell box test scene: colored walls, ceiling light, two objects.
+/// Classic GI test — color bleeding from walls proves indirect illumination.
+pub fn generate_cornell_box() -> (Vec<ChunkData>, Vec<MaterialEntry>) {
+    let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+    let mut occ = OccupancyBuilder::new();
+    let mut pal = PaletteBuilder::new();
+    let mut idx = IndexBufBuilder::new();
+
+    let white_idx = pal.add(MAT_WHITE);
+    let red_idx = pal.add(MAT_RED);
+    let green_idx = pal.add(MAT_GREEN);
+    let light_idx = pal.add(MAT_LIGHT);
+    let gold_idx = pal.add(MAT_GOLD);
+    let rough_idx = pal.add(MAT_ROUGH_GRAY);
+
+    let lo = 1u32;
+    let hi = CS_P - 2; // 62
+
+    // ── Walls, floor, ceiling ──
+    for x in lo..=hi {
+        for z in lo..=hi {
+            // Floor (white)
+            occ.set(x, lo, z);
+            idx.set(x, lo, z, white_idx);
+            // Ceiling (white)
+            occ.set(x, hi, z);
+            idx.set(x, hi, z, white_idx);
+        }
+    }
+
+    for y in lo..=hi {
+        for z in lo..=hi {
+            // Left wall (RED)
+            occ.set(lo, y, z);
+            idx.set(lo, y, z, red_idx);
+            // Right wall (GREEN)
+            occ.set(hi, y, z);
+            idx.set(hi, y, z, green_idx);
+        }
+        for x in lo..=hi {
+            // Back wall (white)
+            occ.set(x, y, lo);
+            idx.set(x, y, lo, white_idx);
+            // Front wall open (no wall — camera looks in from here)
+        }
+    }
+
+    // ── Ceiling light (emissive panel, centered, ~20×20) ──
+    let light_lo = 22u32;
+    let light_hi = 42u32;
+    for x in light_lo..=light_hi {
+        for z in light_lo..=light_hi {
+            // Overwrite ceiling voxels with emissive
+            idx.set(x, hi, z, light_idx);
+        }
+    }
+
+    // ── Tall gold box (left side) ──
+    let box_x = (12u32, 26u32);
+    let box_y = (lo + 1, 35u32);
+    let box_z = (15u32, 29u32);
+    for x in box_x.0..=box_x.1 {
+        for y in box_y.0..=box_y.1 {
+            for z in box_z.0..=box_z.1 {
+                occ.set(x, y, z);
+                idx.set(x, y, z, gold_idx);
+            }
+        }
+    }
+
+    // ── Short rough cube (right side) ──
+    let cube_x = (36u32, 50u32);
+    let cube_y = (lo + 1, 18u32);
+    let cube_z = (32u32, 46u32);
+    for x in cube_x.0..=cube_x.1 {
+        for y in cube_y.0..=cube_y.1 {
+            for z in cube_z.0..=cube_z.1 {
+                occ.set(x, y, z);
+                idx.set(x, y, z, rough_idx);
+            }
+        }
+    }
+
+    let chunk = ChunkData {
+        coord,
+        occupancy: occ,
+        palette: pal,
+        index_buf: idx,
+    };
+
+    let materials = cornell_box_materials();
+    (vec![chunk], materials)
 }
 
 /// Generate a room chunk: floor, ceiling, and four walls.

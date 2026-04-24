@@ -85,6 +85,15 @@ impl Camera {
         self.fov_y
     }
 
+    /// Reposition camera to frame a model with the given world-space AABB center and extent.
+    /// Places camera along a diagonal, far enough back to see the whole model.
+    pub fn frame_model(&mut self, center: Vec3, extent: f32) {
+        let distance = extent * 1.8; // back off ~1.8x the model size
+        let offset = Vec3::new(0.6, 0.4, 0.6).normalize() * distance;
+        self.position = center + offset;
+        self.direction = (center - self.position).normalize();
+    }
+
     pub fn aspect(&self) -> f32 {
         self.aspect
     }

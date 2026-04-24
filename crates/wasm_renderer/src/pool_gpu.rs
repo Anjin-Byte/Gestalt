@@ -35,16 +35,23 @@ pub struct ChunkPool {
     pub(crate) wire_index_pool: Option<wgpu::Buffer>,
     pub(crate) wire_indirect_buf: Option<wgpu::Buffer>,
 
-    // ── Per-slot material index buffer + metadata ──
+    // ── Per-slot material index buffer (variable allocation) + metadata ──
     pub(crate) index_buf_pool: wgpu::Buffer,
     pub(crate) palette_meta_buf: wgpu::Buffer,
+    pub(crate) index_buf_alloc: IndexBufAllocator,
 
     // ── Per-slot visibility (R-4 output) ──
     pub(crate) visibility_buf: wgpu::Buffer,
+    pub(crate) pass1_visibility_buf: wgpu::Buffer,
 
     // ── Scene-global ──
+    pub(crate) scene_params_buf: wgpu::Buffer,
     pub(crate) material_table: wgpu::Buffer,
     pub(crate) indirect_draw_buf: wgpu::Buffer,
+
+    // ── DDA slot table (coord→slot lookup for GI traversal) ──
+    pub(crate) slot_table_buf: wgpu::Buffer,
+    pub(crate) slot_table_params_buf: wgpu::Buffer,
 
     // ── Bind group layouts (read-only, for render stages) ──
     pub(crate) chunk_meta_layout: wgpu::BindGroupLayout,
@@ -180,6 +187,13 @@ impl ChunkPool {
             mapped_at_creation: false,
         });
 
+        let scene_params_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene-params"),
+            size: SCENE_PARAMS_BYTES as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let material_table = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("material-table"),
             size: TOTAL_MATERIAL_BYTES,
@@ -189,7 +203,7 @@ impl ChunkPool {
 
         let index_buf_pool = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk-index-buf-pool"),
-            size: TOTAL_INDEX_BUF_BYTES,
+            size: INDEX_BUF_POOL_CAPACITY,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -203,8 +217,15 @@ impl ChunkPool {
 
         let visibility_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("visibility"),
-            size: 4 * MAX_SLOTS as u64, // 1 u32 per slot
+            size: 4 * MAX_SLOTS as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let pass1_visibility_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pass1-visibility"),
+            size: 4 * MAX_SLOTS as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -215,7 +236,23 @@ impl ChunkPool {
         let indirect_draw_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect-draw"),
             size: TOTAL_INDIRECT_BYTES,
-            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // ── DDA slot table (coord→slot for GI traversal) ──
+
+        let slot_table_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("slot-table"),
+            size: SLOT_TABLE_BYTES,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let slot_table_params_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("slot-table-params"),
+            size: SLOT_TABLE_PARAMS_BYTES,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -304,6 +341,17 @@ impl ChunkPool {
                     compute_storage_entry(4, false), // summary (read-write)
                     compute_storage_entry(5, false), // flags (read-write)
                     compute_storage_entry(6, false), // aabb (read-write)
+                    // binding 7: scene_params (uniform — not storage, different limit)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -318,6 +366,7 @@ impl ChunkPool {
                 buf_binding(4, &summary_buf),
                 buf_binding(5, &flags_buf),
                 buf_binding(6, &aabb_buf),
+                buf_binding(7, &scene_params_buf),
             ],
         });
 
@@ -385,6 +434,17 @@ impl ChunkPool {
                     compute_storage_entry(5, false), // mesh_offset_table (read-write, atomic write counter)
                     compute_storage_entry(6, true),  // index_buf_pool (read)
                     compute_storage_entry(7, true),  // palette_meta (read)
+                    // binding 8: scene_params (uniform — not storage, different limit)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -400,6 +460,7 @@ impl ChunkPool {
                 buf_binding(5, &mesh_offset_table),
                 buf_binding(6, &index_buf_pool),
                 buf_binding(7, &palette_meta_buf),
+                buf_binding(8, &scene_params_buf),
             ],
         });
 
@@ -447,9 +508,14 @@ impl ChunkPool {
             wire_indirect_buf: None,
             index_buf_pool,
             palette_meta_buf,
+            index_buf_alloc: IndexBufAllocator::new(),
             visibility_buf,
+            pass1_visibility_buf,
+            scene_params_buf,
             material_table,
             indirect_draw_buf,
+            slot_table_buf,
+            slot_table_params_buf,
             chunk_meta_layout,
             mesh_draw_layout,
             scene_global_layout,
@@ -502,7 +568,8 @@ impl ChunkPool {
         occupancy: &[u32],
         palette: &[u32],
         index_buf_words: &[u32],
-        palette_meta: u32,
+        index_buf_word_offset: u32,
+        palette_meta_word0: u32,
     ) {
         assert!(slot < MAX_SLOTS, "slot {slot} out of range");
         assert!(
@@ -516,30 +583,26 @@ impl ChunkPool {
             "palette exceeds {} words",
             PALETTE_WORDS_PER_SLOT
         );
-        assert!(
-            index_buf_words.len() <= INDEX_BUF_WORDS_PER_SLOT as usize,
-            "index_buf exceeds {} words, got {}",
-            INDEX_BUF_WORDS_PER_SLOT,
-            index_buf_words.len()
-        );
 
         self.upload_occupancy(queue, slot, occupancy);
         self.upload_palette(queue, slot, palette);
 
-        // Write per-voxel palette index buffer
+        // Write per-voxel palette index buffer at variable offset
         if !index_buf_words.is_empty() {
             queue.write_buffer(
                 &self.index_buf_pool,
-                slot as u64 * INDEX_BUF_BYTES_PER_SLOT as u64,
+                index_buf_word_offset as u64 * 4,
                 bytemuck::cast_slice(index_buf_words),
             );
         }
 
-        // Write palette metadata
+        // Write palette metadata: 2 × u32 per slot
+        //   [0]: palette_size | bpe | reserved
+        //   [1]: index_buf_word_offset
         queue.write_buffer(
             &self.palette_meta_buf,
             slot as u64 * PALETTE_META_BYTES as u64,
-            bytemuck::cast_slice(&[palette_meta]),
+            bytemuck::cast_slice(&[palette_meta_word0, index_buf_word_offset]),
         );
 
         // Write coord as vec4i (x, y, z, 0)
@@ -705,6 +768,21 @@ impl ChunkPool {
         &self.flags_buf
     }
 
+    /// Patch all indirect draw entries to instance_count=1, making all slots
+    /// visible for the depth prepass. Each entry is 20 bytes (5 × u32);
+    /// instance_count is at offset 4 within each entry.
+    pub fn force_all_visible(&self, queue: &wgpu::Queue, slot_count: u32) {
+        let one = [1u32];
+        let one_bytes = bytemuck::cast_slice(&one);
+        for slot in 0..slot_count {
+            queue.write_buffer(
+                &self.indirect_draw_buf,
+                slot as u64 * 20 + 4,
+                one_bytes,
+            );
+        }
+    }
+
     /// Set visibility to 1 (visible) for the first `slot_count` slots.
     /// Call after loading/uploading chunks so the first frame's indirect draw works.
     pub fn init_visibility(&self, queue: &wgpu::Queue, slot_count: u32) {
@@ -744,6 +822,24 @@ impl ChunkPool {
     }
     pub fn mesh_offset_table_buf(&self) -> &wgpu::Buffer {
         &self.mesh_offset_table
+    }
+    pub fn pass1_visibility_buf(&self) -> &wgpu::Buffer {
+        &self.pass1_visibility_buf
+    }
+    pub fn scene_params_buf(&self) -> &wgpu::Buffer {
+        &self.scene_params_buf
+    }
+    pub fn reset_index_buf_alloc(&mut self) {
+        self.index_buf_alloc.reset();
+    }
+    pub fn alloc_index_buf(&mut self, words: u32) -> u32 {
+        self.index_buf_alloc.alloc(words)
+    }
+
+    /// Upload scene params: grid_origin (xyz) + voxel_size (w) packed as vec4f.
+    pub fn upload_scene_params(&self, queue: &wgpu::Queue, grid_origin: [f32; 3], voxel_size: f32) {
+        let data = [grid_origin[0], grid_origin[1], grid_origin[2], voxel_size];
+        queue.write_buffer(&self.scene_params_buf, 0, bytemuck::cast_slice(&data));
     }
     pub fn draw_meta_buf(&self) -> &wgpu::Buffer {
         &self.draw_meta_buf
@@ -785,6 +881,66 @@ impl ChunkPool {
     }
     pub fn has_wireframe_buffers(&self) -> bool {
         self.wire_index_pool.is_some()
+    }
+
+    // ── DDA slot table ──
+
+    pub fn slot_table_buf(&self) -> &wgpu::Buffer { &self.slot_table_buf }
+    pub fn slot_table_params_buf(&self) -> &wgpu::Buffer { &self.slot_table_params_buf }
+    pub fn occupancy_atlas_buf(&self) -> &wgpu::Buffer { &self.occupancy_atlas }
+    pub fn palette_buf(&self) -> &wgpu::Buffer { &self.palette_buf }
+    pub fn palette_meta_buf(&self) -> &wgpu::Buffer { &self.palette_meta_buf }
+    pub fn index_buf_pool_buf(&self) -> &wgpu::Buffer { &self.index_buf_pool }
+    pub fn material_table_buf(&self) -> &wgpu::Buffer { &self.material_table }
+
+    /// Rebuild and upload the GPU slot table from the current allocator state.
+    /// Call after loading/unloading chunks.
+    pub fn upload_slot_table(&self, queue: &wgpu::Queue) {
+        // Compute bounding box of all allocated chunk coords
+        let mut min_coord = [i32::MAX; 3];
+        let mut max_coord = [i32::MIN; 3];
+        let mut has_any = false;
+
+        for (_slot, coord) in self.allocator.allocated_slots() {
+            has_any = true;
+            min_coord[0] = min_coord[0].min(coord.x);
+            min_coord[1] = min_coord[1].min(coord.y);
+            min_coord[2] = min_coord[2].min(coord.z);
+            max_coord[0] = max_coord[0].max(coord.x);
+            max_coord[1] = max_coord[1].max(coord.y);
+            max_coord[2] = max_coord[2].max(coord.z);
+        }
+
+        if !has_any {
+            return;
+        }
+
+        // Center the origin so coords map into [0, DIM)
+        let dim = SLOT_TABLE_DIM as i32;
+        let origin = [
+            (min_coord[0] + max_coord[0]) / 2 - dim / 2,
+            (min_coord[1] + max_coord[1]) / 2 - dim / 2,
+            (min_coord[2] + max_coord[2]) / 2 - dim / 2,
+        ];
+
+        // Fill table with sentinel
+        let mut table = vec![SLOT_TABLE_SENTINEL; SLOT_TABLE_ENTRIES as usize];
+
+        for (slot, coord) in self.allocator.allocated_slots() {
+            let lx = coord.x - origin[0];
+            let ly = coord.y - origin[1];
+            let lz = coord.z - origin[2];
+            if lx >= 0 && lx < dim && ly >= 0 && ly < dim && lz >= 0 && lz < dim {
+                let idx = lx as u32 + ly as u32 * SLOT_TABLE_DIM + lz as u32 * SLOT_TABLE_DIM * SLOT_TABLE_DIM;
+                table[idx as usize] = slot;
+            }
+        }
+
+        queue.write_buffer(&self.slot_table_buf, 0, bytemuck::cast_slice(&table));
+
+        // Upload params: origin.xyz + dim
+        let params: [i32; 4] = [origin[0], origin[1], origin[2], dim];
+        queue.write_buffer(&self.slot_table_params_buf, 0, bytemuck::cast_slice(&params));
     }
 }
 

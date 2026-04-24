@@ -34,6 +34,7 @@ const COLS_PER_THREAD: u32 = 16u;       // 4096 / 256
 @group(0) @binding(4) var<storage, read_write> summary_out:    array<u32>;
 @group(0) @binding(5) var<storage, read_write> flags_out:      array<u32>;
 @group(0) @binding(6) var<storage, read_write> aabb_out:       array<vec4f>;
+@group(0) @binding(7) var<uniform>             scene_params:   vec4f; // xyz=grid_origin, w=voxel_size
 
 // ─── Shared memory ──────────────────────────────────────────────────────
 
@@ -186,13 +187,13 @@ fn main(
         }
         flags_out[slot] = f;
 
-        // Write AABB
+        // Write AABB in world space (scaled by voxel_size + grid_origin)
         let chunk_coord = coord[slot];
-        // chunk_coord * CS (usable stride). See chunk-contract.md.
-        let world_offset = vec3f(f32(chunk_coord.x), f32(chunk_coord.y), f32(chunk_coord.z)) * f32(CS);
+        let vs = scene_params.w;
+        let go = scene_params.xyz;
+        let world_offset = (vec3f(f32(chunk_coord.x), f32(chunk_coord.y), f32(chunk_coord.z)) * f32(CS) - vec3f(1.0)) * vs + go;
 
         if total_pop == 0u {
-            // Degenerate AABB for empty chunks
             aabb_out[slot * 2u] = vec4f(1e20, 1e20, 1e20, 0.0);
             aabb_out[slot * 2u + 1u] = vec4f(-1e20, -1e20, -1e20, 0.0);
         } else {
@@ -202,12 +203,12 @@ fn main(
                 f32(atomicLoad(&s_min_z)),
             );
             let mx = vec3f(
-                f32(atomicLoad(&s_max_x)) + 1.0,
-                f32(atomicLoad(&s_max_y)) + 1.0,
-                f32(atomicLoad(&s_max_z)) + 1.0,
+                f32(atomicLoad(&s_max_x)),
+                f32(atomicLoad(&s_max_y)),
+                f32(atomicLoad(&s_max_z)),
             );
-            aabb_out[slot * 2u] = vec4f(world_offset + mn, 0.0);
-            aabb_out[slot * 2u + 1u] = vec4f(world_offset + mx, 0.0);
+            aabb_out[slot * 2u] = vec4f(world_offset + mn * vs, 0.0);
+            aabb_out[slot * 2u + 1u] = vec4f(world_offset + (mx + vec3f(1.0)) * vs, 0.0);
         }
     }
 

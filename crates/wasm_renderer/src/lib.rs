@@ -10,6 +10,11 @@ pub mod voxelizer_cpu;
 
 // GPU module and Renderer struct are WASM-only (depend on web_sys, OffscreenCanvas).
 // Camera and pool are pure Rust, testable on any target.
+//
+// `gi` itself is host-available so v3's pure-Rust modules (slot allocator,
+// CPU reference helpers, constants) can be unit-tested. v2_legacy and v3's
+// GPU dispatch are gated wasm32-only inside the module.
+pub mod gi;
 #[cfg(target_arch = "wasm32")]
 pub mod gpu;
 #[cfg(target_arch = "wasm32")]
@@ -35,11 +40,14 @@ pub struct Renderer {
     surface_config: wgpu::SurfaceConfiguration,
     depth_texture: Option<wgpu::Texture>,
     depth_view: Option<wgpu::TextureView>,
+    normal_texture: Option<wgpu::Texture>,
+    normal_view: Option<wgpu::TextureView>,
     hiz_texture: Option<wgpu::Texture>,
     hiz_mip_views: Vec<wgpu::TextureView>,
     hiz_mip_count: u32,
     hiz_build_pass: passes::hiz_build::HizBuildPass,
     hiz_bind_groups: Option<passes::hiz_build::HizBindGroups>,
+    frustum_cull_pass: passes::frustum_cull::FrustumCullPass,
     occlusion_cull_pass: passes::occlusion_cull::OcclusionCullPass,
     render: gpu::RenderResources,
     camera: camera::Camera,
@@ -60,6 +68,19 @@ pub struct Renderer {
     backface_culling: bool,
     depth_prepass_enabled: bool,
     use_cpu_mesh: bool,
+    scene_voxel_size: f32,
+    scene_grid_origin: [f32; 3],
+    scene_mesh_center: [f32; 3],
+    scene_mesh_extent: f32,
+    freeze_cull: bool,
+    hiz_cull_enabled: bool,
+    frustum_cull_enabled: bool,
+    // ── GI backend (trait object — see gi/mod.rs) ──
+    gi_backend: Box<dyn gi::GiBackend>,
+    gi_pipeline: gi::GiPipeline,
+    prev_view_proj: glam::Mat4,
+    gi_enabled: bool,
+
     frame_index: u32,
     // Per-frame CPU-side pass timing (real, not fabricated)
     timing_depth_ms: f32,
@@ -157,24 +178,39 @@ impl Renderer {
             &device,
             pool.prefix_sum_layout(),
         );
-        let build_indirect_pass = passes::build_indirect::BuildIndirectPass::new(
-            &device,
-            pool.mesh_offset_table_buf(),
-            pool.indirect_buffer(),
-            pool.visibility_buf(),
-        );
+        let build_indirect_pass = passes::build_indirect::BuildIndirectPass::new(&device);
         // F8: BuildWireframePass created lazily when wireframe mode first activated.
         // Avoids allocating ~128 MB wireframe buffers at startup.
 
         // Depth + Hi-Z + render resources
         let depth_format = wgpu::TextureFormat::Depth32Float;
         let (depth_tex, depth_view) = gpu::create_depth_texture(&device, width, height, depth_format);
+        let (normal_tex, normal_view) = gpu::create_normal_texture(&device, width, height);
         let (hiz_tex, hiz_mip_views, hiz_mip_count) = gpu::create_hiz_pyramid(&device, width, height);
         let hiz_build_pass = passes::hiz_build::HizBuildPass::new(&device);
         let hiz_bind_groups = hiz_build_pass.create_bind_groups(
             &device, &depth_view, &hiz_mip_views, width, height,
         );
+        let frustum_cull_pass = passes::frustum_cull::FrustumCullPass::new(&device);
         let occlusion_cull_pass = passes::occlusion_cull::OcclusionCullPass::new(&device);
+
+        // ── GI backend (trait object) ──
+        // The backend owns all GI-specific resources (buffers, pipelines,
+        // bind groups, shaders). It provides its consumer bind group layout
+        // and shader source for the color pipeline compilation below.
+        let gi_backend = gi::create_backend(
+            &device, &queue, width, height, format,
+            &depth_view, &normal_view,
+            pool.occupancy_atlas_buf(),
+            pool.flags_buf(),
+            pool.slot_table_buf(),
+            pool.material_table_buf(),
+            pool.palette_buf(),
+            pool.palette_meta_buf(),
+            pool.index_buf_pool_buf(),
+            pool.slot_table_params_buf(),
+        );
+
         let render = gpu::RenderResources::new(
             &device,
             format,
@@ -182,6 +218,8 @@ impl Renderer {
             pool.vertex_pool_buf(),
             pool.scene_global_layout(),
             pool.scene_global_bind_group(),
+            gi_backend.consumer_layout(),
+            &gi_backend.consumer_shader_source(),
         );
         let camera = camera::Camera::new(width as f32, height as f32);
 
@@ -194,11 +232,14 @@ impl Renderer {
             surface_config: config,
             depth_texture: Some(depth_tex),
             depth_view: Some(depth_view),
+            normal_texture: Some(normal_tex),
+            normal_view: Some(normal_view),
             hiz_texture: Some(hiz_tex),
             hiz_mip_views,
             hiz_mip_count,
             hiz_build_pass,
             hiz_bind_groups: Some(hiz_bind_groups),
+            frustum_cull_pass,
             occlusion_cull_pass,
             render,
             camera,
@@ -218,6 +259,17 @@ impl Renderer {
             backface_culling: true,
             depth_prepass_enabled: true,
             use_cpu_mesh: false,
+            scene_voxel_size: 1.0,
+            scene_grid_origin: [0.0; 3],
+            scene_mesh_center: [32.0, 32.0, 32.0],
+            scene_mesh_extent: 64.0,
+            freeze_cull: false,
+            hiz_cull_enabled: true,
+            frustum_cull_enabled: true,
+            gi_backend,
+            gi_pipeline: gi::GI_PIPELINE,
+            prev_view_proj: glam::Mat4::IDENTITY,
+            gi_enabled: false,
             frame_index: 0,
             timing_depth_ms: 0.0,
             timing_color_ms: 0.0,
@@ -238,6 +290,9 @@ impl Renderer {
         let (depth_tex, depth_view) = gpu::create_depth_texture(
             &self.device, width, height, wgpu::TextureFormat::Depth32Float,
         );
+        let (normal_tex, normal_view) = gpu::create_normal_texture(&self.device, width, height);
+        self.normal_texture = Some(normal_tex);
+        self.normal_view = Some(normal_view);
         let (hiz_tex, hiz_mip_views, hiz_mip_count) =
             gpu::create_hiz_pyramid(&self.device, width, height);
         let hiz_bind_groups = self.hiz_build_pass.create_bind_groups(
@@ -250,6 +305,11 @@ impl Renderer {
         self.hiz_mip_views = hiz_mip_views;
         self.hiz_mip_count = hiz_mip_count;
         self.hiz_bind_groups = Some(hiz_bind_groups);
+
+        // Notify GI backend of resize (v2 needs atlas recreation, v3 is no-op).
+        let dv = self.depth_view.as_ref().unwrap();
+        let nv = self.normal_view.as_ref().unwrap();
+        self.gi_backend.on_resize(&self.device, &self.queue, width, height, dv, nv);
 
         self.camera.resize(width as f32, height as f32);
     }
@@ -294,6 +354,85 @@ impl Renderer {
     pub fn set_depth_prepass(&mut self, enabled: bool) { self.depth_prepass_enabled = enabled; }
     pub fn set_use_cpu_mesh(&mut self, enabled: bool) { self.use_cpu_mesh = enabled; }
     pub fn get_use_cpu_mesh(&self) -> bool { self.use_cpu_mesh }
+    pub fn set_freeze_cull(&mut self, enabled: bool) { self.freeze_cull = enabled; }
+    pub fn get_freeze_cull(&self) -> bool { self.freeze_cull }
+    pub fn set_hiz_cull_enabled(&mut self, enabled: bool) { self.hiz_cull_enabled = enabled; }
+    pub fn get_hiz_cull_enabled(&self) -> bool { self.hiz_cull_enabled }
+    pub fn set_frustum_cull_enabled(&mut self, enabled: bool) { self.frustum_cull_enabled = enabled; }
+    pub fn get_frustum_cull_enabled(&self) -> bool { self.frustum_cull_enabled }
+    pub fn set_gi_enabled(&mut self, enabled: bool) { self.gi_enabled = enabled; }
+    pub fn get_gi_enabled(&self) -> bool { self.gi_enabled }
+
+    /// Switch the active GI backend at runtime.
+    /// mode: 0 = off (NullBackend), 1 = v2 legacy, 2 = v3 world-space.
+    /// Reconstructs the backend, recompiles the color pipeline, and
+    /// re-notifies the new backend of current scene state.
+    pub fn set_gi_backend(&mut self, mode: u8) {
+        let pipeline = match mode {
+            0 => gi::GiPipeline::Null,
+            1 => gi::GiPipeline::V2Legacy,
+            2 => gi::GiPipeline::V3Cascades,
+            _ => return,
+        };
+
+        let dv = self.depth_view.as_ref().unwrap();
+        let nv = self.normal_view.as_ref().unwrap();
+        let format = self.surface_config.format;
+        let width = self.surface_config.width;
+        let height = self.surface_config.height;
+
+        self.gi_backend = gi::create_backend_for(
+            pipeline,
+            &self.device, &self.queue, width, height, format, dv, nv,
+            self.pool.occupancy_atlas_buf(),
+            self.pool.flags_buf(),
+            self.pool.slot_table_buf(),
+            self.pool.material_table_buf(),
+            self.pool.palette_buf(),
+            self.pool.palette_meta_buf(),
+            self.pool.index_buf_pool_buf(),
+            self.pool.slot_table_params_buf(),
+        );
+
+        // Recompile the color pipeline with the new backend's layout + shader.
+        let depth_format = wgpu::TextureFormat::Depth32Float;
+        self.render = gpu::RenderResources::new(
+            &self.device,
+            format,
+            depth_format,
+            self.pool.vertex_pool_buf(),
+            self.pool.scene_global_layout(),
+            self.pool.scene_global_bind_group(),
+            self.gi_backend.consumer_layout(),
+            &self.gi_backend.consumer_shader_source(),
+        );
+
+        // Re-notify the new backend of current scene state so it can
+        // rebuild any internal lookup tables.
+        self.gi_backend.on_scene_reset(&self.queue);
+        for (slot, coord) in self.pool.allocator().allocated_slots() {
+            self.gi_backend.on_chunk_resident(&self.queue, slot, coord);
+        }
+        self.gi_backend.on_residency_settled(&self.queue, self.pool.allocator());
+
+        self.gi_pipeline = pipeline;
+        self.gi_enabled = mode != 0;
+    }
+
+    /// Returns the currently active GI backend mode.
+    /// 0 = off, 1 = v2 legacy, 2 = v3 world-space.
+    pub fn get_gi_backend(&self) -> u8 {
+        match self.gi_pipeline {
+            gi::GiPipeline::Null => 0,
+            gi::GiPipeline::V2Legacy => 1,
+            gi::GiPipeline::V3Cascades => 2,
+        }
+    }
+    pub fn get_mesh_center(&self) -> Vec<f32> { self.scene_mesh_center.to_vec() }
+    pub fn get_mesh_extent(&self) -> f32 {
+        // The mesh extent in world space — stored from voxelizer result
+        self.scene_mesh_extent
+    }
 
     /// Per-pass CPU-side frame timing: [depth_ms, color_ms, total_ms].
     /// Measures command encoding time, not GPU execution. Real data, not fabricated.
@@ -314,22 +453,33 @@ impl Renderer {
         );
     }
 
-    /// Generate and upload the procedural test scene (room + sphere + emissive).
+    /// Generate and upload the Cornell box test scene (colored walls + emissive light + objects).
     pub fn load_test_scene(&mut self) -> Result<(), JsValue> {
-        let (chunks, materials) = scene::generate_test_scene();
+        let (chunks, materials) = scene::generate_cornell_box();
+
+        // Notify GI backend of scene reset.
+        self.gi_backend.on_scene_reset(&self.queue);
 
         // Upload material table
         let mat_bytes: &[u8] = bytemuck::cast_slice(&materials);
         self.pool.upload_materials(&self.queue, mat_bytes);
 
+        // Scene params: test scene uses identity transform
+        self.scene_voxel_size = 1.0;
+        self.scene_grid_origin = [0.0; 3];
+        self.pool.upload_scene_params(&self.queue, self.scene_grid_origin, self.scene_voxel_size);
+
         // Upload each chunk
+        self.pool.reset_index_buf_alloc();
         for chunk in &chunks {
             let slot = self.pool.alloc_slot(chunk.coord)
                 .map_err(|e| JsValue::from_str(&format!("Alloc error: {e:?}")))?;
+            self.gi_backend.on_chunk_resident(&self.queue, slot, chunk.coord);
             let palette_words = chunk.palette.as_words();
             let bpe = scene::IndexBufBuilder::bits_per_entry(chunk.palette.len());
             let index_buf_words = chunk.index_buf.pack(bpe);
             let meta = scene::IndexBufBuilder::palette_meta(chunk.palette.len());
+            let ib_offset = self.pool.alloc_index_buf(index_buf_words.len() as u32);
             self.pool.upload_chunk(
                 &self.queue,
                 slot,
@@ -337,6 +487,7 @@ impl Renderer {
                 chunk.occupancy.as_words(),
                 &palette_words,
                 &index_buf_words,
+                ib_offset,
                 meta,
             );
             log(&format!(
@@ -346,6 +497,10 @@ impl Renderer {
                 chunk.palette.len(), bpe,
             ));
         }
+
+        // Upload DDA slot table for GI traversal
+        self.pool.upload_slot_table(&self.queue);
+        self.gi_backend.on_residency_settled(&self.queue, self.pool.allocator());
 
         // Dispatch I-3 summary rebuild for all uploaded chunks
         let resident_count = self.pool.allocator().resident_count();
@@ -381,6 +536,8 @@ impl Renderer {
                 &idx_words,
                 meta,
                 [chunk.coord.x, chunk.coord.y, chunk.coord.z],
+                self.scene_voxel_size,
+                self.scene_grid_origin,
             );
             self.mesh_verts += cpu_result.draw_meta.vertex_count;
             self.mesh_indices += cpu_result.draw_meta.index_count;
@@ -441,19 +598,30 @@ impl Renderer {
 
         // Clear existing scene
         self.pool.allocator_mut().clear();
+        self.gi_backend.on_scene_reset(&self.queue);
 
         // Upload material table
         let mat_bytes: &[u8] = bytemuck::cast_slice(&result.materials);
         self.pool.upload_materials(&self.queue, mat_bytes);
 
+        // Scene params from voxelizer
+        self.scene_voxel_size = result.voxel_size;
+        self.scene_grid_origin = result.grid_origin;
+        self.scene_mesh_center = result.mesh_center;
+        self.scene_mesh_extent = result.mesh_extent;
+        self.pool.upload_scene_params(&self.queue, self.scene_grid_origin, self.scene_voxel_size);
+
         // Upload each chunk
+        self.pool.reset_index_buf_alloc();
         for chunk in chunks_to_load {
             let slot = self.pool.alloc_slot(chunk.coord)
                 .map_err(|e| JsValue::from_str(&format!("Alloc error: {e:?}")))?;
+            self.gi_backend.on_chunk_resident(&self.queue, slot, chunk.coord);
             let palette_words = chunk.palette.as_words();
             let bpe = scene::IndexBufBuilder::bits_per_entry(chunk.palette.len());
             let index_buf_words = chunk.index_buf.pack(bpe);
             let meta = scene::IndexBufBuilder::palette_meta(chunk.palette.len());
+            let ib_offset = self.pool.alloc_index_buf(index_buf_words.len() as u32);
             self.pool.upload_chunk(
                 &self.queue,
                 slot,
@@ -461,9 +629,14 @@ impl Renderer {
                 chunk.occupancy.as_words(),
                 &palette_words,
                 &index_buf_words,
+                ib_offset,
                 meta,
             );
         }
+
+        // Upload DDA slot table for GI traversal
+        self.pool.upload_slot_table(&self.queue);
+        self.gi_backend.on_residency_settled(&self.queue, self.pool.allocator());
 
         // Dispatch I-3 summary rebuild
         let resident_count = self.pool.allocator().resident_count();
@@ -489,9 +662,15 @@ impl Renderer {
         self.mesh_indices = 0;
         self.mesh_quads = 0;
 
+        // Frame the camera on the loaded model
+        self.camera.frame_model(
+            glam::Vec3::from(result.mesh_center),
+            result.mesh_extent,
+        );
+
         log(&format!(
-            "OBJ loaded: {} chunks, {} voxels, {} slots",
-            chunks_to_load.len(), self.total_voxels, resident_count,
+            "OBJ loaded: {} chunks, {} voxels, {} slots, extent={:.2}",
+            chunks_to_load.len(), self.total_voxels, resident_count, result.mesh_extent,
         ));
         Ok(())
     }
@@ -521,6 +700,8 @@ impl Renderer {
 
         let depth_view = self.depth_view.as_ref()
             .ok_or_else(|| JsValue::from_str("No depth view"))?;
+        let normal_view = self.normal_view.as_ref()
+            .ok_or_else(|| JsValue::from_str("No normal view"))?;
 
         let vp = self.camera.view_proj();
         let pos = self.camera.position();
@@ -536,19 +717,43 @@ impl Renderer {
         // Skip when: wireframe mode (no solid fill), or user toggled it off for debug.
         let skip_depth = self.render_mode == 0x02 || !self.depth_prepass_enabled;
 
-        // Reset visibility to all-visible and rebuild indirect buffer BEFORE the
-        // depth prepass. The depth prepass must draw ALL slots to produce correct
-        // depth for Hi-Z. R-4 occlusion cull will then write real visibility,
-        // and build_indirect runs again with filtered results for the color pass.
-        if !skip_depth && self.resident_count > 0 {
-            self.pool.init_visibility(&self.queue, self.resident_count);
-            self.build_indirect_pass.dispatch(&mut encoder, self.resident_count);
+        // Two-phase occlusion cull: the depth prepass uses the PREVIOUS frame's
+        // filtered indirect buffer. Only previously-visible slots contribute depth.
+        // Hi-Z is built from partial depth (occluders only). R-4 tests ALL slots
+        // against this partial Hi-Z — no self-interference, no flicker.
+        // See: docs/Resident Representation/two-phase-occlusion-cull.md
+
+        // Frustum pre-cull: zero instance_count for chunks now outside the frustum.
+        // Prevents off-screen chunks (visible last frame) from drawing in the depth
+        // prepass with stale screen positions, which would corrupt the Hi-Z.
+        if !skip_depth && self.resident_count > 0 && !self.freeze_cull && self.frustum_cull_enabled {
+            let frustum_bg = self.frustum_cull_pass.create_bind_group(
+                &self.device,
+                &self.render.camera_buf,
+                self.pool.aabb_buf(),
+                self.pool.flags_buf(),
+                self.pool.indirect_buffer(),
+                self.resident_count,
+            );
+            self.frustum_cull_pass.dispatch(
+                &mut encoder,
+                &frustum_bg,
+                self.resident_count,
+            );
         }
 
         if !skip_depth {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("R-2-depth-prepass"),
-                color_attachments: &[],
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: normal_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
                     depth_ops: Some(wgpu::Operations {
@@ -573,37 +778,131 @@ impl Renderer {
             self.draw_all_slots(&mut pass);
         }
 
-        // ── R-3: Hi-Z pyramid build ──
-        if !skip_depth {
-            if let Some(ref hiz_bgs) = self.hiz_bind_groups {
+        // ── Two-pass occlusion cull (skipped when frozen or Hi-Z disabled) ──
+        // See: docs/Resident Representation/two-pass-occlusion-impl.md
+        if !skip_depth && !self.freeze_cull && self.hiz_cull_enabled && self.resident_count > 0 {
+            if let (Some(ref hiz_bgs), Some(ref hiz_tex)) = (&self.hiz_bind_groups, &self.hiz_texture) {
+                let hiz_full_view = hiz_tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let sw = self.surface_config.width;
+                let sh = self.surface_config.height;
+                let rc = self.resident_count;
+
+                // Step 3: Hi-Z build 1
                 self.hiz_build_pass.dispatch(&mut encoder, hiz_bgs);
+
+                // Step 4: R-4 Pass 1 → pass1_visibility
+                let cull_bg_p1 = self.occlusion_cull_pass.create_bind_group(
+                    &self.device, &self.render.camera_buf,
+                    self.pool.aabb_buf(), self.pool.flags_buf(),
+                    &hiz_full_view,
+                    self.pool.pass1_visibility_buf(), // write here
+                    self.pool.visibility_buf(),       // dummy for binding 6 (not read in pass1)
+                    rc, sw, sh, 0, // pass2_mode = 0
+                );
+                self.occlusion_cull_pass.dispatch(&mut encoder, &cull_bg_p1, rc);
+
+                // Step 5: Copy pass1_visibility → visibility_buf
+                encoder.copy_buffer_to_buffer(
+                    self.pool.pass1_visibility_buf(), 0,
+                    self.pool.visibility_buf(), 0,
+                    4 * rc as u64,
+                );
+
+                // Step 6: build_indirect (interim) — reads pass1_visibility
+                let bi_bg_interim = self.build_indirect_pass.create_bind_group(
+                    &self.device,
+                    self.pool.mesh_offset_table_buf(),
+                    self.pool.indirect_buffer(),
+                    self.pool.pass1_visibility_buf(),
+                );
+                self.build_indirect_pass.dispatch(&mut encoder, &bi_bg_interim, rc);
             }
         }
 
-        // ── R-4: Occlusion cull (chunk-level) + rebuild indirect ──
-        if !skip_depth && self.resident_count > 0 {
-            if let Some(ref hiz_tex) = self.hiz_texture {
-                let hiz_full_view = hiz_tex.create_view(&wgpu::TextureViewDescriptor::default());
-                let cull_bg = self.occlusion_cull_pass.create_bind_group(
-                    &self.device,
-                    &self.render.camera_buf,
-                    self.pool.aabb_buf(),
-                    self.pool.flags_buf(),
-                    &hiz_full_view,
-                    self.pool.visibility_buf(),
-                    self.resident_count,
-                    self.surface_config.width,
-                    self.surface_config.height,
-                );
-                self.occlusion_cull_pass.dispatch(
-                    &mut encoder,
-                    &cull_bg,
-                    self.resident_count,
-                );
-            }
+        // Step 7: Depth prepass 2 (Load — preserves prepass 1 depth, adds Pass 1 survivors)
+        if !skip_depth && !self.freeze_cull && self.hiz_cull_enabled {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("R-2b-depth-prepass-2"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: normal_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // preserve prepass 1 normals
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // preserve prepass 1 depth
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.render.depth_pipeline);
+            pass.set_bind_group(0, Some(&self.render.camera_bind_group), &[]);
+            pass.set_bind_group(1, Some(&self.render.vertex_bind_group), &[]);
+            pass.set_index_buffer(
+                self.pool.index_buffer().slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            self.draw_all_slots(&mut pass);
+        }
 
-            // Rebuild indirect draw args with visibility filtering
-            self.build_indirect_pass.dispatch(&mut encoder, self.resident_count);
+        // Steps 8-10: Hi-Z build 2 + R-4 Pass 2 + build_indirect (final)
+        if !skip_depth && !self.freeze_cull && self.hiz_cull_enabled && self.resident_count > 0 {
+            if let (Some(ref hiz_bgs), Some(ref hiz_tex)) = (&self.hiz_bind_groups, &self.hiz_texture) {
+                let hiz_full_view = hiz_tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let sw = self.surface_config.width;
+                let sh = self.surface_config.height;
+                let rc = self.resident_count;
+
+                // Step 8: Hi-Z build 2
+                self.hiz_build_pass.dispatch(&mut encoder, hiz_bgs);
+
+                // Step 9: R-4 Pass 2 → visibility_buf (rejects only)
+                let cull_bg_p2 = self.occlusion_cull_pass.create_bind_group(
+                    &self.device, &self.render.camera_buf,
+                    self.pool.aabb_buf(), self.pool.flags_buf(),
+                    &hiz_full_view,
+                    self.pool.visibility_buf(),           // write here
+                    self.pool.pass1_visibility_buf(),     // read to skip survivors
+                    rc, sw, sh, 1, // pass2_mode = 1
+                );
+                self.occlusion_cull_pass.dispatch(&mut encoder, &cull_bg_p2, rc);
+
+                // Step 10: build_indirect (final) — reads merged visibility
+                let bi_bg_final = self.build_indirect_pass.create_bind_group(
+                    &self.device,
+                    self.pool.mesh_offset_table_buf(),
+                    self.pool.indirect_buffer(),
+                    self.pool.visibility_buf(),
+                );
+                self.build_indirect_pass.dispatch(&mut encoder, &bi_bg_final, rc);
+            }
+        }
+
+        // GI build dispatch — delegated to the active backend.
+        {
+            let gi_params = gi::GiBuildParams {
+                gi_enabled: self.gi_enabled,
+                resident_count: self.resident_count,
+                frame_index: self.frame_index,
+                voxel_scale: self.scene_voxel_size,
+                grid_origin: self.scene_grid_origin,
+                camera_proj_inv: self.camera.proj().inverse(),
+                camera_view_inv: self.camera.view().inverse(),
+                camera_view_proj: self.camera.view_proj(),
+                prev_view_proj: self.prev_view_proj,
+                screen_width: self.surface_config.width,
+                screen_height: self.surface_config.height,
+            };
+            self.gi_backend.dispatch_build(&mut encoder, &self.queue, &gi_params);
         }
 
         let after_depth = js_sys::Date::now();
@@ -620,7 +919,7 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.06, g: 0.06, b: 0.08, a: 1.0,
+                            r: 0.0, g: 0.0, b: 0.0, a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -640,6 +939,8 @@ impl Renderer {
             pass.set_pipeline(&self.render.wireframe_pipeline);
             pass.set_bind_group(0, Some(&self.render.camera_bind_group), &[]);
             pass.set_bind_group(1, Some(&self.render.vertex_bind_group), &[]);
+            pass.set_bind_group(2, Some(self.pool.scene_global_bind_group()), &[]);
+            pass.set_bind_group(3, Some(self.gi_backend.consumer_bind_group()), &[]);
             pass.set_index_buffer(
                 self.pool.wire_index_pool().slice(..),
                 wgpu::IndexFormat::Uint32,
@@ -672,8 +973,21 @@ impl Renderer {
             pass.set_bind_group(0, Some(&self.render.camera_bind_group), &[]);
             pass.set_bind_group(1, Some(&depth_viz_bg), &[]);
             pass.draw(0..3, 0..1);
+        } else if self.render_mode >= 0x20 && self.render_mode <= 0x27 {
+            // Cascade debug viz — delegated to the active GI backend.
+            let debug_params = gi::GiDebugParams {
+                target: &color_view,
+                depth_view,
+                normal_view,
+                camera_proj_inv: self.camera.proj().inverse(),
+                camera_view_inv: self.camera.view().inverse(),
+                mode: self.render_mode - 0x20,
+            };
+            self.gi_backend.debug_render(
+                &mut encoder, &self.queue, &self.device, &debug_params,
+            );
         } else {
-            // Geometry pass (depth read-only)
+            // Geometry pass (depth read-only — allows depth texture binding in fragment shader)
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("R-5-color"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -682,7 +996,7 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.06, g: 0.06, b: 0.08, a: 1.0,
+                            r: 0.0, g: 0.0, b: 0.0, a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -708,6 +1022,7 @@ impl Renderer {
             pass.set_bind_group(0, Some(&self.render.camera_bind_group), &[]);
             pass.set_bind_group(1, Some(&self.render.vertex_bind_group), &[]);
             pass.set_bind_group(2, Some(self.pool.scene_global_bind_group()), &[]);
+            pass.set_bind_group(3, Some(self.gi_backend.consumer_bind_group()), &[]);
             pass.set_index_buffer(
                 self.pool.index_buffer().slice(..),
                 wgpu::IndexFormat::Uint32,
@@ -727,6 +1042,7 @@ impl Renderer {
         self.diag_summary_rebuilds = 0;
         self.diag_mesh_rebuilds = 0;
 
+        self.prev_view_proj = self.camera.view_proj();
         self.frame_index += 1;
         Ok(())
     }
@@ -809,6 +1125,8 @@ impl Renderer {
                     &idx_words,
                     meta_val,
                     [chunk.coord.x, chunk.coord.y, chunk.coord.z],
+                    self.scene_voxel_size,
+                    self.scene_grid_origin,
                 );
                 quad_counts.push(result.quad_count);
                 results.push(result);
@@ -872,7 +1190,13 @@ impl Renderer {
             let mut encoder = self.device.create_command_encoder(
                 &wgpu::CommandEncoderDescriptor { label: Some("cpu-mesh-indirect") },
             );
-            self.build_indirect_pass.dispatch(&mut encoder, resident_count);
+            let bi_bg = self.build_indirect_pass.create_bind_group(
+                &self.device,
+                self.pool.mesh_offset_table_buf(),
+                self.pool.indirect_buffer(),
+                self.pool.visibility_buf(),
+            );
+            self.build_indirect_pass.dispatch(&mut encoder, &bi_bg, resident_count);
             self.queue.submit(std::iter::once(encoder.finish()));
         } else {
             // GPU three-pass pipeline: Count → Prefix Sum → Write
@@ -910,7 +1234,13 @@ impl Renderer {
             );
 
             // Build indirect draw args from offset table
-            self.build_indirect_pass.dispatch(&mut encoder, resident_count);
+            let bi_bg = self.build_indirect_pass.create_bind_group(
+                &self.device,
+                self.pool.mesh_offset_table_buf(),
+                self.pool.indirect_buffer(),
+                self.pool.visibility_buf(),
+            );
+            self.build_indirect_pass.dispatch(&mut encoder, &bi_bg, resident_count);
 
             self.queue.submit(std::iter::once(encoder.finish()));
         }
@@ -918,6 +1248,7 @@ impl Renderer {
         // Force wireframe rebuild on next activation
         self.build_wireframe_pass = None;
     }
+
 }
 
 #[cfg(target_arch = "wasm32")]

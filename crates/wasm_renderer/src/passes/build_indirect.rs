@@ -1,19 +1,17 @@
-//! Build Indirect Draw Args — reads draw_meta, writes DrawIndexedIndirect.
-//! Runs after R-1 mesh rebuild. One thread per slot.
+//! Build Indirect Draw Args — reads visibility + offset table, writes DrawIndexedIndirect.
+//!
+//! Refactored for two-pass occlusion: called twice per frame with different
+//! visibility buffers. Bind groups are created per-dispatch, not at init.
 
 /// GPU compute pipeline for building indirect draw arguments.
 pub struct BuildIndirectPass {
     pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
 }
 
 impl BuildIndirectPass {
     pub fn new(
         device: &wgpu::Device,
-        mesh_offset_table: &wgpu::Buffer,
-        indirect_draw_buf: &wgpu::Buffer,
-        visibility_buf: &wgpu::Buffer,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("build-indirect-shader"),
@@ -74,9 +72,21 @@ impl BuildIndirectPass {
             cache: None,
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        Self { pipeline, bind_group_layout }
+    }
+
+    /// Create a bind group for one dispatch. Call with different visibility buffers
+    /// for interim (pass1_visibility) vs final (merged visibility) dispatches.
+    pub fn create_bind_group(
+        &self,
+        device: &wgpu::Device,
+        mesh_offset_table: &wgpu::Buffer,
+        indirect_draw_buf: &wgpu::Buffer,
+        visibility_buf: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("build-indirect-bg"),
-            layout: &bind_group_layout,
+            layout: &self.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -91,27 +101,23 @@ impl BuildIndirectPass {
                     resource: visibility_buf.as_entire_binding(),
                 },
             ],
-        });
-
-        Self {
-            pipeline,
-            bind_group_layout,
-            bind_group,
-        }
+        })
     }
 
     /// Dispatch build_indirect for `slot_count` slots.
-    pub fn dispatch(&self, encoder: &mut wgpu::CommandEncoder, slot_count: u32) {
-        if slot_count == 0 {
-            return;
-        }
-        let workgroups = (slot_count + 63) / 64;
+    pub fn dispatch(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group: &wgpu::BindGroup,
+        slot_count: u32,
+    ) {
+        if slot_count == 0 { return; }
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("build-indirect"),
             timestamp_writes: None,
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, Some(&self.bind_group), &[]);
-        pass.dispatch_workgroups(workgroups, 1, 1);
+        pass.set_bind_group(0, Some(bind_group), &[]);
+        pass.dispatch_workgroups((slot_count + 63) / 64, 1, 1);
     }
 }

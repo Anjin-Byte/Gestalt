@@ -56,7 +56,7 @@ function renderFrame() {
   frameTimeline.push({
     totalMs: timings[2],
     passes: {
-      "R-2 Depth Prepass": timings[0],
+      "R-2 Depth + R-3/R-4 Cull": timings[0],
       "R-5 Color Pass": timings[1],
     },
   });
@@ -139,10 +139,14 @@ export function setDepthPrepass(enabled: boolean) {
   renderer?.set_depth_prepass(enabled);
 }
 
-/** Load an OBJ model: parse → voxelize → upload → render. */
-export function loadModel(objText: string, resolution: number) {
+/** Load an OBJ model: parse → voxelize → upload → render. Returns model info for camera framing. */
+export function loadModel(objText: string, resolution: number): { center: [number, number, number]; extent: number } {
   if (!renderer) throw new Error("Renderer not initialized");
   renderer.load_obj_model(objText, resolution);
+  // Read back model center/extent from WASM for orbit camera reset
+  const c = renderer.get_mesh_center();
+  const e = renderer.get_mesh_extent();
+  return { center: [c[0], c[1], c[2]], extent: e };
 }
 
 /** Toggle CPU mesh path (bypasses GPU mesh_rebuild compute shader). */
@@ -150,9 +154,39 @@ export function setUseCpuMesh(enabled: boolean) {
   renderer?.set_use_cpu_mesh(enabled);
 }
 
+/** Freeze occlusion culling at current view. Move camera to see what's culled. */
+export function setFreezeCull(enabled: boolean) {
+  renderer?.set_freeze_cull(enabled);
+}
+
 /** Whether CPU mesh path is active. */
 export function getUseCpuMesh(): boolean {
   return renderer?.get_use_cpu_mesh() ?? false;
+}
+
+/** Toggle Hi-Z occlusion culling (R-4 two-pass). */
+export function setHizCullEnabled(enabled: boolean) {
+  renderer?.set_hiz_cull_enabled(enabled);
+}
+
+/** Toggle frustum pre-cull. */
+export function setFrustumCullEnabled(enabled: boolean) {
+  renderer?.set_frustum_cull_enabled(enabled);
+}
+
+/** Toggle GI (cascade 0 ambient occlusion + emissive indirect). */
+export function setGiEnabled(enabled: boolean) {
+  renderer?.set_gi_enabled(enabled);
+}
+
+/** Switch GI backend at runtime. 0 = off, 1 = v2 legacy, 2 = v3 world-space. */
+export function setGiBackend(mode: number) {
+  renderer?.set_gi_backend(mode);
+}
+
+/** Returns the currently active GI backend. 0 = off, 1 = v2, 2 = v3. */
+export function getGiBackend(): number {
+  return renderer?.get_gi_backend() ?? 0;
 }
 
 /** Stop the render loop and release GPU resources. */

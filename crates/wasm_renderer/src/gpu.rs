@@ -26,6 +26,31 @@ pub fn create_depth_texture(
     (texture, view)
 }
 
+/// Create a normal G-buffer texture (rgba16float) for storing world-space normals.
+/// Written during the depth prepass, read by the cascade build shader.
+pub fn create_normal_texture(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("normal-gbuffer"),
+        size: wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
 /// Create the Hi-Z pyramid texture with a full mip chain (r32float).
 /// Returns the texture, the full-mip view, per-mip views for storage writes,
 /// and the mip count.
@@ -66,6 +91,9 @@ pub fn create_hiz_pyramid(
     (texture, mip_views, mip_count)
 }
 
+// v2 cascade constants (N_CASCADES, CASCADE_UNIFORM_ALIGNED_SIZE,
+// CascadeUniforms, create_cascade_atlas) moved to gi/v2_legacy/backend.rs.
+
 /// Camera uniform data matching the WGSL `Camera` struct.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -98,6 +126,8 @@ impl RenderResources {
         vertex_pool: &wgpu::Buffer,
         material_table_layout: &wgpu::BindGroupLayout,
         _material_table_bind_group: &wgpu::BindGroup,
+        gi_layout: &wgpu::BindGroupLayout,
+        solid_shader_source: &str,
     ) -> Self {
         // Camera uniform buffer (80 bytes: mat4x4f + vec4f)
         let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -157,9 +187,12 @@ impl RenderResources {
 
         // ── Shaders ──
 
+        // Solid shader source is provided by the active GI backend.
+        // Each backend returns a complete WGSL string (with any needed
+        // prepends already applied) via GiBackend::consumer_shader_source().
         let solid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("solid-shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/solid.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(solid_shader_source.into()),
         });
 
         let depth_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -186,13 +219,15 @@ impl RenderResources {
             immediate_size: 0,
         });
 
-        // Color/normals/wireframe: [camera, vertex_pool, material_table]
+        // Color/normals/wireframe: [camera, vertex_pool, material_table, gi]
+        // Group 3 layout is provided by the active GI backend.
         let color_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("color-layout"),
             bind_group_layouts: &[
                 Some(&camera_layout),
                 Some(&vertex_layout),
                 Some(material_table_layout),
+                Some(gi_layout),
             ],
             immediate_size: 0,
         });
@@ -227,7 +262,7 @@ impl RenderResources {
             write_mask: wgpu::ColorWrites::ALL,
         });
 
-        // ── R-2 Depth prepass pipeline (vertex only, no fragment) ──
+        // ── R-2 Depth prepass pipeline (writes depth + normal G-buffer) ──
 
         let depth_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("depth-prepass-pipeline"),
@@ -238,7 +273,16 @@ impl RenderResources {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[],
             },
-            fragment: None,
+            fragment: Some(wgpu::FragmentState {
+                module: &depth_shader,
+                entry_point: Some("fs_depth"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
             primitive: prim,
             depth_stencil: Some(depth_write.clone()),
             multisample: wgpu::MultisampleState::default(),
@@ -397,6 +441,8 @@ impl RenderResources {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
+
+        // Cascade debug viz pipelines moved to V2LegacyBackend::create_debug_viz().
 
         Self {
             camera_buf,
