@@ -18,16 +18,24 @@ been confirmed. Before this set ships to the public portfolio site, each
 author, URL, and SPDX identifier — and the attribution must be surfaced in the
 demos UI (design §7, §10.4).
 
-| id | attribution status |
-|---|---|
-| `littlest_tokyo` | Believed **"Littlest Tokyo" by Glen Fox, CC-BY-4.0** (via three.js examples) — **confirm** before deploy |
-| `steampunk_camera` | **TODO** — source/author/license unknown |
-| `venice_mask` | **TODO** — source/author/license unknown |
-| `nemetona` | **TODO** — source/author/license unknown |
-| `bath_day` | **TODO** — source/author/license unknown |
+Author + source below are from each model's **embedded glTF metadata**
+(`asset.extras`), cross-checked against the live model pages, and are populated
+in `manifest.json` → `license.{author,url,attribution}`.
 
-Prefer CC0; CC-BY is acceptable **only** with attribution surfaced in the UI.
-Anything without a clear, redistribution-permitting license should be swapped out.
+| id | author | source |
+|---|---|---|
+| `littlest_tokyo` | glenatron | [Littlest Tokyo](https://sketchfab.com/models/94b24a60dc1b48248de50bf087c0f042) |
+| `bath_day` | Stan.St | [Bath day](https://sketchfab.com/3d-models/bath-day-c1b0d6edd934423d965e3cd032eb358e) |
+| `nemetona` | JOJObrush | [Nemetona_NatureBeauty](https://sketchfab.com/3d-models/nemetona-naturebeauty-c338180707ce4b7c9bb4d1c6d24843c0) |
+| `steampunk_camera` | lumoize | [Steampunk Camera](https://sketchfab.com/3d-models/steampunk-camera-a2210a0ba6834141af3bf83ee1e03f07) |
+| `venice_mask` | DailyArt | [Venice Mask](https://sketchfab.com/3d-models/venice-mask-4aace12762ee44cf97d934a6ced12e65) |
+
+**Licensing not carried in the manifest (per owner), but noted here:** the
+embedded metadata reports all five as CC-BY-4.0 **except `venice_mask`, which is
+CC-BY-NC-4.0 (NonCommercial)** — confirmed acceptable, as this portfolio use is
+non-commercial. CC-BY/CC-BY-NC still expect the credit surfaced in the UI (it is,
+on the gallery cards) and that modifications be indicated (these are voxelized —
+a heavy modification).
 
 ## Layout
 

@@ -10,10 +10,10 @@
       "thumbnail": "thumbs/littlest_tokyo.png",
       "license": {
         "spdx": "CC-BY-4.0",
-        "author": "Glen Fox",
-        "url": "https://sketchfab.com/3d-models/littlest-tokyo-94b24a60dc1b48248de50bf087c0f042",
+        "author": "glenatron",
+        "url": "https://sketchfab.com/models/94b24a60dc1b48248de50bf087c0f042",
         "status": "unverified",
-        "attribution": "\"Littlest Tokyo\" by Glen Fox, CC-BY-4.0"
+        "attribution": "\"Littlest Tokyo\" by glenatron"
       },
       "res": 512,
       "textureMax": 1024,
@@ -33,10 +33,10 @@
       "thumbnail": "thumbs/steampunk_camera.png",
       "license": {
         "spdx": null,
-        "author": null,
-        "url": null,
+        "author": "lumoize",
+        "url": "https://sketchfab.com/3d-models/steampunk-camera-a2210a0ba6834141af3bf83ee1e03f07",
         "status": "unverified",
-        "attribution": "TODO: confirm source, author, and license before public deploy"
+        "attribution": "\"Steampunk Camera\" by lumoize"
       },
       "res": 512,
       "textureMax": 1024,
@@ -56,10 +56,10 @@
       "thumbnail": "thumbs/venice_mask.png",
       "license": {
         "spdx": null,
-        "author": null,
-        "url": null,
+        "author": "DailyArt",
+        "url": "https://sketchfab.com/3d-models/venice-mask-4aace12762ee44cf97d934a6ced12e65",
         "status": "unverified",
-        "attribution": "TODO: confirm source, author, and license before public deploy"
+        "attribution": "\"Venice Mask\" by DailyArt"
       },
       "res": 512,
       "textureMax": 1024,
@@ -79,10 +79,10 @@
       "thumbnail": "thumbs/nemetona.png",
       "license": {
         "spdx": null,
-        "author": null,
-        "url": null,
+        "author": "JOJObrush",
+        "url": "https://sketchfab.com/3d-models/nemetona-naturebeauty-c338180707ce4b7c9bb4d1c6d24843c0",
         "status": "unverified",
-        "attribution": "TODO: confirm source, author, and license before public deploy"
+        "attribution": "\"Nemetona_NatureBeauty\" by JOJObrush"
       },
       "res": 512,
       "textureMax": 1024,
@@ -102,10 +102,10 @@
       "thumbnail": "thumbs/bath_day.png",
       "license": {
         "spdx": null,
-        "author": null,
-        "url": null,
+        "author": "Stan.St",
+        "url": "https://sketchfab.com/3d-models/bath-day-c1b0d6edd934423d965e3cd032eb358e",
         "status": "unverified",
-        "attribution": "TODO: confirm source, author, and license before public deploy"
+        "attribution": "\"Bath day\" by Stan.St"
       },
       "res": 512,
       "textureMax": 1024,
