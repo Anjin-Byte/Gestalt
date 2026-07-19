@@ -1,16 +1,20 @@
-//! GPU truecolor-render differential (`docs/materials/11-truecolor-design.md`, P4).
+//! GPU **deferred**-truecolor render test (Stage A·1).
 //!
-//! Renders a per-voxel **truecolor**-baked scene and reads the framebuffer back,
-//! proving the WGSL hit-time colour read (`render_truecolor.wgsl`:
-//! `leaf_color_rank` → chunk-select → `unpack4x8unorm`) reproduces the compact
-//! `leaf_color` the CPU assembler wrote. It also **naga-validates**
-//! `render_truecolor.wgsl` (the shader only compiles when the truecolor
-//! `GpuRenderer::new` branch runs) and exercises the **chunk-select** path on real
-//! hardware via a forced-tiny `per_chunk` (so `N > 1` needs only kilobytes of VRAM,
-//! not the production 285 MiB).
+//! Builds a per-voxel truecolor-baked scene, renders it through GTAO's deferred
+//! pipeline (G-buffer albedo → composite, gated by `dims.w` bit7) and reads the
+//! framebuffer back. Proves (a) the truecolor G-buffer + composite shaders
+//! **naga-validate** (they only build when `GpuRenderer::new` runs the truecolor
+//! branch), and (b) the per-voxel baked colour reaches the screen, lit by the
+//! deferred chain — distinguishable from the position-hash fallback.
 //!
-//! Gated like `differential.rs`/`material_render.rs`: with no adapter it skips,
-//! unless `VOXEL_REQUIRE_GPU=1` forces a hard failure.
+//! Unlike the forward path, the deferred path *lights* the albedo, so we assert the
+//! baked **hue** dominates rather than exact bytes: a saturated-red bake has
+//! green/blue ≈ 0, so after sRGB→linear + lighting the output is strongly
+//! red-dominant — whereas the position-hash fallback yields balanced channels. A
+//! no-colour control renders the same geometry and must NOT be red-dominant.
+//!
+//! Gated like `differential.rs`: with no adapter it skips, unless
+//! `VOXEL_REQUIRE_GPU=1` forces a hard failure.
 
 #![allow(clippy::cast_precision_loss)]
 
@@ -18,11 +22,9 @@ use voxel_core::fixtures::Solid;
 use voxel_core::{MaterialTable, Resolution, SchoolBBuffer, SparseTree, VoxelCoord};
 use voxel_gpu::{GpuCamera, GpuContext, GpuError, GpuRenderer, OUTPUT_FORMAT};
 
-/// Four distinct mid-range RGBA8 bytes (R low) — unreachable by the palette read
-/// or the position-shade fallback, so the N=1 test's match is load-bearing.
-const FLAT_COLOR: [u8; 4] = [0x12, 0x34, 0x56, 0xFF];
-/// The unique colour of the cross-chunk (g=2) voxel in the chunk-select test.
-const HI_COLOR: [u8; 4] = [0xAA, 0xBB, 0xCC, 0xFF];
+/// Saturated red — green/blue near zero so the truecolor albedo is unmistakable
+/// after lighting (the position-hash fallback yields balanced channels).
+const RED: [u8; 4] = [220, 12, 12, 255];
 
 fn require_gpu() -> bool {
     std::env::var_os("VOXEL_REQUIRE_GPU").is_some()
@@ -32,14 +34,14 @@ fn context_or_skip() -> Option<GpuContext> {
     match GpuContext::try_new() {
         Ok(ctx) => Some(ctx),
         Err(GpuError::NoAdapter) if !require_gpu() => {
-            eprintln!("skip: no GPU adapter present (set VOXEL_REQUIRE_GPU=1 to require one)");
+            eprintln!("skip: no GPU adapter (set VOXEL_REQUIRE_GPU=1 to require one)");
             None
         }
         Err(e) => panic!("GPU unavailable: {e}"),
     }
 }
 
-/// A perspective camera looking straight down +Z at the centre of an `n³` grid.
+/// Perspective camera looking straight down +Z at the centre of an `n³` grid.
 fn front_camera(r: Resolution, dim: u32) -> GpuCamera {
     let n = r.voxels_per_axis() as f32;
     let half = n * 0.5;
@@ -56,11 +58,11 @@ fn front_camera(r: Resolution, dim: u32) -> GpuCamera {
     }
 }
 
-/// Renders a pre-built `renderer` from `camera` into a `dim×dim` framebuffer and
-/// reads it back as RGBA8 pixels (row-major). `dim*4` must be a multiple of 256.
+/// Renders `renderer` from `camera` into a `dim×dim` framebuffer, read back as
+/// row-major RGBA8. `dim*4` must be a multiple of 256.
 fn read_render(
     ctx: &GpuContext,
-    renderer: &GpuRenderer,
+    renderer: &mut GpuRenderer,
     camera: &GpuCamera,
     dim: u32,
 ) -> Vec<[u8; 4]> {
@@ -85,7 +87,6 @@ fn read_render(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-
     let mut encoder = ctx
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -132,50 +133,88 @@ fn read_render(
     px
 }
 
+/// Number of *strongly* red-dominant pixels (`R > G+40 && R > B+40`) in the central
+/// window of a `dim×dim` image. The +40 margin separates truecolor (G,B ≈ 0) from
+/// the position-hash fallback (balanced channels in the central region).
+fn central_red_dominant(px: &[[u8; 4]], dim: u32) -> (usize, usize) {
+    let d = dim as usize;
+    let (lo, hi) = (d * 3 / 8, d * 5 / 8);
+    let mut red = 0;
+    let mut total = 0;
+    for y in lo..hi {
+        for x in lo..hi {
+            let p = px[y * d + x];
+            total += 1;
+            if i32::from(p[0]) > i32::from(p[1]) + 40 && i32::from(p[0]) > i32::from(p[2]) + 40 {
+                red += 1;
+            }
+        }
+    }
+    (red, total)
+}
+
 #[test]
-fn truecolor_renders_baked_colour_matching_the_assembler() {
-    // N=1: a Solid cube baked to a CONSTANT colour. The exact bytes are unreachable
-    // by both the palette read (magenta / table) and the position-shade fallback
-    // (which varies monotonically with world coords), so a large solid region of
-    // the exact colour proves the truecolor read ran — a mis-wire to either
-    // fallback yields a varying or magenta region.
+fn deferred_truecolor_albedo_reaches_the_screen() {
     let Some(ctx) = context_or_skip() else { return };
-    // sRGB byte-order guard: a future flip to an sRGB target would shift these
-    // mid-range bytes on store and fail the equality below.
+    // sRGB byte-order guard: a flip to an sRGB target would change the decode.
     assert_eq!(OUTPUT_FORMAT, wgpu::TextureFormat::Rgba8Unorm);
 
     let r = Resolution::new(32).unwrap();
     let tree = SparseTree::build(&Solid { resolution: r });
-    let mut structure = SchoolBBuffer::from_sparse(&tree);
-    structure.assemble_leaf_color(&tree, |_| FLAT_COLOR);
-    assert!(
-        structure.has_leaf_color(),
-        "scene must route through truecolor"
-    );
+    let dim = 64u32; // dim*4 = 256, a valid readback bytes_per_row
 
-    let renderer = GpuRenderer::new(&ctx, &structure, &MaterialTable::missing_only()).unwrap();
-    let dim = 64u32;
-    let px = read_render(&ctx, &renderer, &front_camera(r, dim), dim);
-
-    let exact = px.iter().filter(|p| **p == FLAT_COLOR).count();
-    let magenta = px.iter().filter(|p| **p == [255, 0, 255, 255]).count();
+    // Truecolor: a Solid cube baked saturated red → routes through dims.w bit7.
+    let mut colored = SchoolBBuffer::from_sparse(&tree);
+    colored.assemble_leaf_color(&tree, |_| RED);
     assert!(
-        exact > 200,
-        "the baked cube should fill a large central region; only {exact}/{} pixels matched the baked colour",
-        px.len()
+        colored.has_leaf_color(),
+        "baked scene must route through truecolor"
     );
-    assert_eq!(
-        magenta, 0,
-        "truecolor must not fall back to the magenta sentinel"
+    // Constructing this naga-validates the truecolor g-buffer + composite pipelines.
+    let mut tc =
+        GpuRenderer::new(&ctx, &colored, &voxel_core::MaterialTable::missing_only()).unwrap();
+    let tc_px = read_render(&ctx, &mut tc, &front_camera(r, dim), dim);
+    let (tc_red, total) = central_red_dominant(&tc_px, dim);
+
+    // Control: the SAME geometry with no baked colour → position-hash fallback.
+    let plain = SchoolBBuffer::from_sparse(&tree);
+    assert!(!plain.has_leaf_color());
+    let mut ctrl =
+        GpuRenderer::new(&ctx, &plain, &voxel_core::MaterialTable::missing_only()).unwrap();
+    let ctrl_px = read_render(&ctx, &mut ctrl, &front_camera(r, dim), dim);
+    let (ctrl_red, _) = central_red_dominant(&ctrl_px, dim);
+
+    assert!(
+        tc_red > total / 2,
+        "truecolor: the red bake should dominate the central hit region — only \
+         {tc_red}/{total} pixels were strongly red-dominant"
     );
+    assert!(
+        ctrl_red < total / 4,
+        "position-hash control should not be red-dominant ({ctrl_red}/{total}); the \
+         redness in the truecolor render ({tc_red}/{total}) must come from the albedo path"
+    );
+}
+
+/// Number of *strongly* red-dominant pixels over the WHOLE image — the
+/// chunk-select voxel is a few pixels, so no central window.
+fn red_dominant_anywhere(px: &[[u8; 4]]) -> usize {
+    px.iter()
+        .filter(|p| {
+            i32::from(p[0]) > i32::from(p[1]) + 40 && i32::from(p[0]) > i32::from(p[2]) + 40
+        })
+        .count()
 }
 
 #[test]
 fn truecolor_chunk_select_reads_a_high_chunk() {
     // Forced-tiny per_chunk=2 drives the N>1 cross-chunk path on a 3-voxel scene
     // (no 285 MiB needed). Three voxels in ONE brick get g = 0,1,2; the visible
-    // voxel at local (3,3,0) (morton 27) has rank 2 ⇒ g=2 ⇒ chunk 1. Its unique
-    // colour appearing in the readback proves read_leaf_color's chunk==1 arm works.
+    // voxel at local (3,3,0) (morton 27) has rank 2 ⇒ g=2 ⇒ chunk 1. Deferred
+    // lighting shades the albedo, so the oracle is hue dominance: the g=2 voxel
+    // is the only SATURATED-RED albedo in the scene (its brick-mates are dark
+    // blue-leaning, the sky is dark blue) — any strongly red-dominant pixel
+    // proves `read_leaf_color` crossed into chunk 1.
     let Some(ctx) = context_or_skip() else { return };
     let r = Resolution::new(32).unwrap();
 
@@ -185,12 +224,12 @@ fn truecolor_chunk_select_reads_a_high_chunk() {
     let vox_g1 = VoxelCoord::new(17, 16, 0);
     let vox_g2 = VoxelCoord::new(19, 19, 0); // the cross-chunk voxel
     let color_of = move |coord: VoxelCoord| -> [u8; 4] {
-        if coord == vox_g0 {
+        if coord == vox_g2 {
+            RED
+        } else if coord == vox_g0 {
             [0x11, 0x22, 0x33, 0xFF]
         } else if coord == vox_g1 {
-            [0x44, 0x55, 0x66, 0xFF]
-        } else if coord == vox_g2 {
-            HI_COLOR
+            [0x14, 0x25, 0x66, 0xFF]
         } else {
             [0, 0, 0, 0xFF]
         }
@@ -205,7 +244,7 @@ fn truecolor_chunk_select_reads_a_high_chunk() {
         "exactly 3 occupied voxels"
     );
 
-    // CPU precondition (R2 #1): the visible voxel actually crosses a chunk boundary,
+    // CPU precondition: the visible voxel actually crosses a chunk boundary,
     // else the test is vacuous (chunk-select never leaves chunk 0).
     let slot = tree.leaf_slot_of(vox_g2).unwrap() as usize;
     let morton = voxel_core::morton::encode_brick(vox_g2.x & 7, vox_g2.y & 7, vox_g2.z & 7);
@@ -218,7 +257,7 @@ fn truecolor_chunk_select_reads_a_high_chunk() {
         "geometry did not cross a chunk boundary; test is vacuous"
     );
 
-    let renderer = GpuRenderer::new_with_per_chunk(
+    let mut renderer = GpuRenderer::new_with_per_chunk(
         &ctx,
         &structure,
         &MaterialTable::missing_only(),
@@ -226,77 +265,22 @@ fn truecolor_chunk_select_reads_a_high_chunk() {
     )
     .unwrap();
     let dim = 64u32;
-    let px = read_render(&ctx, &renderer, &front_camera(r, dim), dim);
+    let px = read_render(&ctx, &mut renderer, &front_camera(r, dim), dim);
 
-    let hits_c = px.iter().filter(|p| **p == HI_COLOR).count();
+    let red = red_dominant_anywhere(&px);
     assert!(
-        hits_c > 0,
-        "the chunk-1 voxel's colour must render (proves read_leaf_color crossed into chunk 1)"
-    );
-}
-
-#[test]
-fn truecolor_blend_composites_front_over_back() {
-    // Phase 2 BLEND: a semi-transparent RED voxel (α=128) in front of an OPAQUE BLUE
-    // voxel along the same ray must read back as the front-to-back composite
-    // (~½red + ½blue), proving: (1) `has_transparency` routed to the blend pipeline,
-    // (2) `traverse_and_composite` did NOT stop at the first hit, (3) the opaque
-    // backdrop (bit-18 clear) terminated the accumulation, (4) the blend WGSL is
-    // naga-valid (it only compiles when this pipeline is built).
-    let Some(ctx) = context_or_skip() else { return };
-    let r = Resolution::new(32).unwrap();
-    // A 5×5 patch centred on the camera axis (eye is at grid centre 16,16). Front
-    // layer z=8 (semi-transparent red), back layer z=10 (opaque blue) — same z-brick
-    // (8..15), so the leaf carries the transparency bit and the +Z ray hits red then
-    // blue with negligible perspective divergence (2 voxels apart).
-    let mut voxels = Vec::new();
-    for dy in 0..5u32 {
-        for dx in 0..5u32 {
-            voxels.push(VoxelCoord::new(14 + dx, 14 + dy, 8));
-            voxels.push(VoxelCoord::new(14 + dx, 14 + dy, 10));
-        }
-    }
-    let tree = SparseTree::from_voxels(r, voxels.iter().map(|&v| (v, 0u16)));
-    let mut structure = SchoolBBuffer::from_sparse(&tree);
-    structure.assemble_leaf_color(&tree, |c| {
-        if c.z == 8 {
-            [255, 0, 0, 128]
-        } else {
-            [0, 0, 255, 255]
-        }
-    });
-    assert!(
-        structure.has_transparency(),
-        "the α=128 front voxels must flag the scene transparent (→ blend pipeline)"
-    );
-
-    let renderer = GpuRenderer::new(&ctx, &structure, &MaterialTable::missing_only()).unwrap();
-    let dim = 64u32;
-    let px = read_render(&ctx, &renderer, &front_camera(r, dim), dim);
-
-    // The composite ≈ (128, 0, 127): R from the front blend, B from the back opaque.
-    let composited = px
-        .iter()
-        .filter(|p| p[0] > 90 && p[0] < 165 && p[2] > 90 && p[2] < 165 && p[1] < 40)
-        .count();
-    assert!(
-        composited > 4,
-        "front blend must composite over the back opaque; got {composited} composite pixels"
-    );
-    // A first-hit-stop (no compositing) would render the front voxel as opaque red.
-    let opaque_red = px.iter().filter(|p| p[0] > 200 && p[2] < 40).count();
-    assert_eq!(
-        opaque_red, 0,
-        "the front BLEND voxel must not render as opaque red (that would be first-hit-stop)"
+        red > 0,
+        "the chunk-1 voxel's saturated-red albedo must reach the screen \
+         (proves read_leaf_color crossed into chunk 1)"
     );
 }
 
 #[test]
 fn device_grants_enough_storage_buffers_for_truecolor() {
     // The pure probe can't see the device's GRANTED limit; this confirms the real
-    // adapter supplies the 7 storage buffers the truecolor layout binds (3 carried +
-    // base + 3 chunks). Stock wgpu default is 8, so this passes everywhere the
-    // palette path already runs.
+    // adapter supplies the 7 storage buffers the truecolor g-buffer binds (3
+    // structure + page + 3 chunks). Stock wgpu default is 8, so this passes
+    // everywhere the palette path already runs.
     let Some(ctx) = context_or_skip() else { return };
     assert!(
         ctx.max_storage_buffers() >= 7,

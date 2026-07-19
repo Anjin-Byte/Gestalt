@@ -305,3 +305,85 @@ fn traverse_ray(o: vec3<f32>, d: vec3<f32>, n: f32, k: u32) -> HitResult {
     }
     return HitResult(vec3<u32>(0u, 0u, 0u), 0u, 0u, 0u);
 }
+
+/// Coarse any-hit traversal for SHADOW rays. A clone of `traverse_ray` that stops
+/// at the BRICK level: it returns occluded (`.w == 1u`) as soon as the ray's chord
+/// clips an occupied 8³ leaf's occupied sub-box (`leaf_reaches`), skipping the
+/// per-voxel interior walk + the `leaf_bit` checks — the deepest, most-divergent
+/// part of the descent. Conservative (the occupied sub-box is treated as opaque,
+/// so shadows are slightly fatter/blockier) but much cheaper. NOT differential-
+/// validated — shadows aren't mirrored — so this is free to coarsen.
+fn traverse_occluded(o: vec3<f32>, d: vec3<f32>, n: f32, k: u32) -> vec4<u32> {
+    let miss = vec4<u32>(0u, 0u, 0u, 0u);
+    let occluded = vec4<u32>(0u, 0u, 0u, 1u);
+
+    // Grid-clip (f32 slab) against [0, n]³ — identical to traverse_ray.
+    var t_near = -BIG;
+    var t_far = BIG;
+    var missed = false;
+    if (d.x == 0.0) { if (o.x < 0.0 || o.x > n) { missed = true; } }
+    else { let inv = 1.0 / d.x; var a = (0.0 - o.x) * inv; var b = (n - o.x) * inv; if (a > b) { let t = a; a = b; b = t; } t_near = max(t_near, a); t_far = min(t_far, b); }
+    if (d.y == 0.0) { if (o.y < 0.0 || o.y > n) { missed = true; } }
+    else { let inv = 1.0 / d.y; var a = (0.0 - o.y) * inv; var b = (n - o.y) * inv; if (a > b) { let t = a; a = b; b = t; } t_near = max(t_near, a); t_far = min(t_far, b); }
+    if (d.z == 0.0) { if (o.z < 0.0 || o.z > n) { missed = true; } }
+    else { let inv = 1.0 / d.z; var a = (0.0 - o.z) * inv; var b = (n - o.z) * inv; if (a > b) { let t = a; a = b; b = t; } t_near = max(t_near, a); t_far = min(t_far, b); }
+
+    if (missed || t_near > t_far || t_far < 0.0) {
+        return miss;
+    }
+    let t_entry = max(t_near, 0.0);
+
+    var root_level = 1u;
+    if (k > 0u) {
+        root_level = k + 1u;
+    }
+    var cur = make_frame(o, d, 0u, root_level, vec3<u32>(0u, 0u, 0u), t_entry);
+    var stack: array<Frame, 6>;
+    var sp = 0u;
+
+    for (var iter = 0u; iter < 200000u; iter = iter + 1u) {
+        if (cur.level == 1u) {
+            // Only reached when the root itself is a leaf (k == 0): exact leaf test.
+            if (leaf_bit(cur.node, cur.cell)) { return occluded; }
+            if (walker_step(&cur)) { continue; }
+            loop {
+                if (sp == 0u) { return miss; }
+                sp = sp - 1u;
+                cur = stack[sp];
+                if (walker_step(&cur)) { break; }
+            }
+        } else {
+            let c = cur.cell;
+            let bit = child_bit(c);
+            let node = nodes[cur.node];
+            let child_level = cur.level - 1u;
+            let size = cell_size_of(cur.level);
+            let child_origin = cur.origin + c * size;
+            var descend = has_child(node, bit);
+            var slot = 0u;
+            if (descend) {
+                slot = child_slot(node, bit);
+                if (child_level == 1u) {
+                    // Brick-level stop: occupied leaf the chord clips ⇒ occluded.
+                    if (leaf_reaches(slot, o, d, child_origin, cur.t_entry)) {
+                        return occluded;
+                    }
+                    descend = false; // chord misses the occupied sub-box → skip it
+                }
+            }
+            if (descend) {
+                stack[sp] = cur;
+                sp = sp + 1u;
+                cur = make_frame(o, d, slot, child_level, child_origin, cur.t_entry);
+            } else if (!walker_step(&cur)) {
+                loop {
+                    if (sp == 0u) { return miss; }
+                    sp = sp - 1u;
+                    cur = stack[sp];
+                    if (walker_step(&cur)) { break; }
+                }
+            }
+        }
+    }
+    return miss;
+}

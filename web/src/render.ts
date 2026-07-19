@@ -49,6 +49,12 @@ export interface RenderHost {
   wheel(notches: number): void;
   /** Selects the camera control scheme (the HUD mode buttons). */
   setCameraMode(mode: CameraMode): void;
+  /** Toggles the GTAO ambient-occlusion term (off skips the AO passes). */
+  setGtao(on: boolean): void;
+  /** Sets the GTAO quality preset (0 Low, 1 Medium, 2 High, 3 Ultra). */
+  setGtaoQuality(preset: number): void;
+  /** Sets the sun-shadow quality: 0 off (web default), 1 low (coarse), 2 high. */
+  setShadowQuality(quality: number): void;
   /** Sets the brush configuration (control plane — the HUD tool palette).
    * `invert` is the Alt-held tool arm (Inflate → deflate). */
   setBrush(
@@ -176,6 +182,15 @@ export class WorkerRenderHost implements RenderHost {
   }
   setCameraMode(mode: CameraMode): void {
     this.#post({ kind: "cameraMode", mode }, []);
+  }
+  setGtao(on: boolean): void {
+    this.#post({ kind: "setGtao", on }, []);
+  }
+  setGtaoQuality(preset: number): void {
+    this.#post({ kind: "setGtaoQuality", preset }, []);
+  }
+  setShadowQuality(quality: number): void {
+    this.#post({ kind: "setShadowQuality", quality }, []);
   }
   setBrush(
     tool: BrushTool,
@@ -341,6 +356,15 @@ export class LocalRenderHost implements RenderHost {
   }
   setCameraMode(mode: CameraMode): void {
     this.#engine?.set_camera_mode(mode);
+  }
+  setGtao(on: boolean): void {
+    this.#engine?.set_gtao(on);
+  }
+  setGtaoQuality(preset: number): void {
+    this.#engine?.set_gtao_quality(preset);
+  }
+  setShadowQuality(quality: number): void {
+    this.#engine?.set_shadow_quality(quality);
   }
   setBrush(
     tool: BrushTool,

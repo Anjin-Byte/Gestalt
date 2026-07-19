@@ -97,6 +97,12 @@ export interface Ui {
   readonly exportCvoxBtn: HTMLButtonElement;
   readonly revoxelizeBtn: HTMLButtonElement;
   readonly camOrbit: HTMLButtonElement;
+  /** The GTAO on/off toggle (settings panel; default on). */
+  readonly gtaoOn: HTMLInputElement;
+  /** The GTAO quality preset picker (settings panel). */
+  readonly gtaoQuality: HTMLSelectElement;
+  /** The sun-shadow quality picker (settings panel; default off). */
+  readonly shadows: HTMLSelectElement;
   readonly camFly: HTMLButtonElement;
   readonly file: HTMLInputElement;
   readonly status: HTMLElement;
@@ -154,6 +160,9 @@ export function bindUi(): Ui {
     exportCvoxBtn: must(document, "#export-cvox", HTMLButtonElement),
     revoxelizeBtn: must(document, "#revoxelize", HTMLButtonElement),
     camOrbit: must(document, "#cam-orbit", HTMLButtonElement),
+    gtaoOn: must(document, "#gtao-on", HTMLInputElement),
+    gtaoQuality: must(document, "#gtao-quality", HTMLSelectElement),
+    shadows: must(document, "#shadows", HTMLSelectElement),
     camFly: must(document, "#cam-fly", HTMLButtonElement),
     file: must(document, "#file", HTMLInputElement),
     status: must(document, "#status", HTMLElement),
@@ -342,11 +351,11 @@ const PANELS_KEY = "voxel-web.panels";
 
 type PanelId = "edit" | "scene" | "io" | "stats" | "settings";
 
-/** First-run composition: the brush (the tool in hand) and the scene config
- * open; file and stats folded until wanted. */
+/** First-run composition: every panel folded — the canvas (and the demo
+ * gallery over it) is the landing experience; the docks are one click away. */
 const PANEL_DEFAULTS: Record<PanelId, boolean> = {
-  edit: true,
-  scene: true,
+  edit: false,
+  scene: false,
   io: false,
   stats: false,
   settings: false,
@@ -953,6 +962,18 @@ export function run(
       ui.galleryGrid.appendChild(card);
     }
   }
+
+  // Lighting effects: control-plane messages, applied immediately (the kernel
+  // re-applies them across scene installs).
+  ui.gtaoOn.addEventListener("change", () => {
+    host.setGtao(ui.gtaoOn.checked);
+  });
+  ui.gtaoQuality.addEventListener("change", () => {
+    host.setGtaoQuality(Number(ui.gtaoQuality.value));
+  });
+  ui.shadows.addEventListener("change", () => {
+    host.setShadowQuality(Number(ui.shadows.value));
+  });
 
   ui.browseDemos.addEventListener("click", openGallery);
   // Dismiss on the scrim or close button (both carry data-gallery-dismiss), or

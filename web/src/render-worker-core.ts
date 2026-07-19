@@ -45,6 +45,9 @@ export interface EngineLike {
   reset_pivot(): void;
   wheel(notches: number): void;
   set_camera_mode(mode: CameraMode): void;
+  set_gtao(on: boolean): void;
+  set_gtao_quality(preset: number): void;
+  set_shadow_quality(quality: number): void;
   set_brush(
     tool: BrushTool,
     radius: number,
@@ -179,6 +182,15 @@ export function attachRenderWorker(scope: RenderWorkerScope, deps: RenderWorkerD
         break;
       case "cameraMode":
         engine.set_camera_mode(req.mode);
+        break;
+      case "setGtao":
+        engine.set_gtao(req.on);
+        break;
+      case "setGtaoQuality":
+        engine.set_gtao_quality(req.preset);
+        break;
+      case "setShadowQuality":
+        engine.set_shadow_quality(req.quality);
         break;
       case "setBrush":
         engine.set_brush(req.tool, req.radius, req.strength, req.falloff, req.color, req.invert);
