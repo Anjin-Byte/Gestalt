@@ -290,8 +290,11 @@ struct Viewer {
     gtao_preset: usize,
     /// Toggle (`N`): GTAO spatial denoise + temporal accumulation.
     denoise: bool,
-    /// Toggle (`K`): the ray-traced hard sun shadow (a real per-pixel cost).
-    shadows: bool,
+    /// Toggle (`O`): the GTAO term itself (off skips the AO + denoise passes).
+    gtao_on: bool,
+    /// Shadow quality cycled by `K`: 0 off, 1 low (coarse brick-level trace),
+    /// 2 high (exact per-voxel trace).
+    shadow_quality: u8,
     resolution: Resolution,
     /// HUD label for the current scene: the fixture name, or the mesh filename.
     scene_label: String,
@@ -482,7 +485,9 @@ impl Viewer {
             show_hud: true,
             gtao_preset: 1, // Medium — matches GtaoParams::default()
             denoise: true,
-            shadows: true,
+            gtao_on: true,
+            shadow_quality: 2, // high (exact) — the native default
+
             resolution,
             scene_label,
             node_count,
@@ -594,8 +599,15 @@ impl Viewer {
                 is_movement = false;
             }
             KeyCode::KeyK if pressed => {
-                self.shadows = !self.shadows; // ray-traced hard sun shadows
-                self.renderer.set_shadows(self.shadows);
+                // Cycle shadow quality: off → low (coarse) → high (exact).
+                self.shadow_quality = (self.shadow_quality + 1) % 3;
+                self.renderer.set_shadows(self.shadow_quality > 0);
+                self.renderer.set_coarse_shadows(self.shadow_quality == 1);
+                is_movement = false;
+            }
+            KeyCode::KeyO if pressed => {
+                self.gtao_on = !self.gtao_on; // the GTAO term itself
+                self.renderer.set_gtao(self.gtao_on);
                 is_movement = false;
             }
             KeyCode::KeyB if pressed => {

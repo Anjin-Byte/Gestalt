@@ -197,9 +197,12 @@ pub struct Engine {
     /// The themed sky endpoints (top, bottom — sRGB RGBA8, R low), kept so a
     /// renderer recreation (install, promotion) re-applies the theme.
     sky: Option<(u32, u32)>,
-    /// Ray-traced hard sun shadows (a real per-pixel cost) — web default OFF;
-    /// the shell's settings toggle re-applies it across renderer rebuilds.
-    shadows: bool,
+    /// Sun-shadow quality (0 off, 1 low = coarse brick trace, 2 high = exact
+    /// per-voxel trace) — web default OFF (a real per-pixel cost); the shell's
+    /// settings control re-applies it across renderer rebuilds.
+    shadow_quality: u32,
+    /// Whether the GTAO term runs at all (off skips the AO + denoise passes).
+    gtao_on: bool,
     /// GTAO quality preset index (0 Low, 1 Medium, 2 High, 3 Ultra).
     gtao_preset: u32,
     /// The per-stroke undo/redo history (`docs/design/brush-editing/05`).
@@ -209,6 +212,13 @@ pub struct Engine {
     needs_full_upload: bool,
     frames: u32,
     last_dt_ms: f64,
+}
+
+/// Applies a shell shadow-quality level (0 off, 1 low/coarse, 2 high/exact)
+/// to a renderer's two shadow knobs.
+fn apply_shadow_quality(renderer: &mut GpuRenderer, quality: u32) {
+    renderer.set_shadows(quality > 0);
+    renderer.set_coarse_shadows(quality == 1);
 }
 
 /// The renderer-side GTAO params for a shell preset index (0 Low … 3 Ultra).
@@ -333,8 +343,8 @@ impl Engine {
         let table = MaterialTable::missing_only();
         let mut renderer =
             GpuRenderer::new(&ctx, &structure, &table).map_err(|e| JsError::new(&e.to_string()))?;
-        // Web defaults: shadows off (perf), Medium GTAO (the renderer default).
-        renderer.set_shadows(false);
+        // Web defaults: shadows off (perf), AO on, Medium GTAO.
+        apply_shadow_quality(&mut renderer, 0);
 
         let (blit_pipeline, blit_layout, sampler) = blit::build_blit(&ctx.device, format);
         let output_view = blit::make_output(&ctx.device, width, height);
@@ -371,7 +381,8 @@ impl Engine {
             input: Input::default(),
             last_camera: orbit.to_gpu(orbit_frame, width, height, n, resolution.internal_levels()),
             brush_params: BrushParams::default(),
-            shadows: false, // web default: shadows off (perf)
+            shadow_quality: 0, // web default: shadows off (perf)
+            gtao_on: true,
             gtao_preset: 1, // Medium
 
             stroke_last: None,
@@ -595,7 +606,8 @@ impl Engine {
         }
         // Re-apply the shell's effect settings — a fresh renderer defaults to
         // shadows ON / Medium, not necessarily what the user chose.
-        renderer.set_shadows(self.shadows);
+        apply_shadow_quality(&mut renderer, self.shadow_quality);
+        renderer.set_gtao(self.gtao_on);
         renderer.set_gtao_params(gtao_params_for(self.gtao_preset));
         self.renderer = Some(renderer);
 
@@ -674,12 +686,23 @@ impl Engine {
     /// RGBA8, R low), dithered per pixel on the GPU so the subtle ramp never
     /// bands. The shell derives both colours from the live CSS theme tokens,
     /// so the canvas follows the stylesheet. Survives renderer recreation.
-    /// Enables/disables the ray-traced sun shadow (web default off). Applies to
-    /// the live renderer and to every renderer rebuilt on a later install.
-    pub fn set_shadows(&mut self, on: bool) {
-        self.shadows = on;
+    /// Sets the sun-shadow quality: `0` off (the web default), `1` low (the
+    /// coarse brick-level trace — cheaper, slightly blockier umbras), `2` high
+    /// (the exact per-voxel trace). Clamped; applies to the live renderer and
+    /// to every renderer rebuilt on a later install.
+    pub fn set_shadow_quality(&mut self, quality: u32) {
+        self.shadow_quality = quality.min(2);
         if let Some(renderer) = &mut self.renderer {
-            renderer.set_shadows(on);
+            apply_shadow_quality(renderer, self.shadow_quality);
+        }
+    }
+
+    /// Enables/disables the GTAO ambient-occlusion term (on by default). Off
+    /// skips the AO + denoise passes entirely — their cost vanishes.
+    pub fn set_gtao(&mut self, on: bool) {
+        self.gtao_on = on;
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_gtao(on);
         }
     }
 
@@ -915,7 +938,8 @@ impl Engine {
             if let Some((top, bottom)) = self.sky {
                 renderer.set_sky(top, bottom);
             }
-            renderer.set_shadows(self.shadows);
+            apply_shadow_quality(renderer, self.shadow_quality);
+            renderer.set_gtao(self.gtao_on);
             renderer.set_gtao_params(gtao_params_for(self.gtao_preset));
         }
         self.needs_full_upload = self.renderer.is_none();

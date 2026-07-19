@@ -15,7 +15,7 @@ struct Camera {
     n: f32,
     up: vec3<f32>,
     _pad: f32,
-    dims: vec4<u32>, // width, height, k, flag bits (bit2 palette, bit7 truecolor)
+    dims: vec4<u32>, // width, height, k, flags (bit2 palette, bit3 AO off, bit7 truecolor)
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -55,7 +55,12 @@ fn composite_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let sun = normalize(sun_dir.xyz);
         let ndl = max(dot(normal, sun), 0.0);
         let up = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
-        let ao = textureLoad(gtao_ao, coord, 0).x; // GTAO visibility [0,1]
+        // GTAO visibility [0,1]; dims.w bit3 = AO disabled (the GTAO/denoise
+        // dispatches were skipped, the texture is stale) → full visibility.
+        var ao = 1.0;
+        if ((camera.dims.w & 8u) == 0u) {
+            ao = textureLoad(gtao_ao, coord, 0).x;
+        }
         let ambient = mix(GROUND_COLOR, SKY_COLOR, up) * ao;
 
         // Albedo source: per-voxel colour from the G-buffer when dims.w bit7

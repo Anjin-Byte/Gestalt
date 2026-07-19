@@ -97,13 +97,17 @@ class FakeHost implements RenderHost {
     this.wheels.push(notches);
   }
   readonly cameraModes: CameraMode[] = [];
-  readonly shadowCalls: boolean[] = [];
+  readonly gtaoCalls: boolean[] = [];
   readonly gtaoQualityCalls: number[] = [];
-  setShadows(on: boolean): void {
-    this.shadowCalls.push(on);
+  readonly shadowQualityCalls: number[] = [];
+  setGtao(on: boolean): void {
+    this.gtaoCalls.push(on);
   }
   setGtaoQuality(preset: number): void {
     this.gtaoQualityCalls.push(preset);
+  }
+  setShadowQuality(quality: number): void {
+    this.shadowQualityCalls.push(quality);
   }
   setCameraMode(mode: CameraMode): void {
     this.cameraModes.push(mode);
@@ -420,19 +424,24 @@ describe("scene application and edit gating", () => {
 });
 
 describe("lighting effects", () => {
-  it("boots with medium AO quality and shadows off, and forwards changes to the host", () => {
+  it("boots with AO on at medium and shadows off, and forwards changes to the host", () => {
     const { ui, host } = setup();
-    // Markup defaults: the web ships Medium AO + shadows off (perf).
+    // Markup defaults: the web ships AO on, Medium quality, shadows off (perf).
+    expect(ui.gtaoOn.checked).toBe(true);
     expect(ui.gtaoQuality.value).toBe("1");
-    expect(ui.shadows.checked).toBe(false);
+    expect(ui.shadows.value).toBe("0");
+
+    ui.gtaoOn.checked = false;
+    ui.gtaoOn.dispatchEvent(new Event("change"));
+    expect(host.gtaoCalls).toEqual([false]);
 
     ui.gtaoQuality.value = "3";
     ui.gtaoQuality.dispatchEvent(new Event("change"));
     expect(host.gtaoQualityCalls).toEqual([3]);
 
-    ui.shadows.checked = true;
+    ui.shadows.value = "2";
     ui.shadows.dispatchEvent(new Event("change"));
-    expect(host.shadowCalls).toEqual([true]);
+    expect(host.shadowQualityCalls).toEqual([2]);
   });
 });
 

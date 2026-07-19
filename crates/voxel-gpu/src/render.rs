@@ -253,6 +253,10 @@ pub struct GpuRenderer {
     frame_index: u32,
     /// False until a same-size prior frame exists (first frame / after resize).
     history_valid: bool,
+    /// Toggle (default on): the GTAO term itself. When off, the GTAO + denoise
+    /// dispatches are skipped entirely (their cost vanishes) and composite reads
+    /// a constant full-visibility AO via the dims.w bit3 gate.
+    gtao_enabled: bool,
     /// Debug toggle (default on): when off, composite reads the raw GTAO AO and the
     /// TAA passes through (no spatial denoise, no temporal accumulation).
     denoise: bool,
@@ -963,6 +967,7 @@ impl GpuRenderer {
             prev_camera: GpuCamera::zeroed(),
             frame_index: 0,
             history_valid: false,
+            gtao_enabled: true,
             denoise: true,
             shadows: true,
             coarse_shadows: false,
@@ -988,6 +993,13 @@ impl GpuRenderer {
     /// accumulation). Takes effect on the next render.
     pub fn set_denoise(&mut self, on: bool) {
         self.denoise = on;
+    }
+
+    /// Enables/disables the GTAO term entirely. Off skips the GTAO + denoise
+    /// dispatches (their whole cost) and composite shades with full ambient
+    /// visibility. Takes effect on the next render.
+    pub fn set_gtao(&mut self, on: bool) {
+        self.gtao_enabled = on;
     }
 
     /// Sets the sky gradient (theme changes): a vertical ramp from `top_rgba`
@@ -1473,6 +1485,7 @@ impl GpuRenderer {
         let mut camera = *camera;
         camera.dims[3] = u32::from(self.shadows)
             | (u32::from(self.coarse_shadows) << 1)
+            | (u32::from(!self.gtao_enabled) << 3) // AO disabled → composite reads 1.0
             | (u32::from(self.albedo_mode == AlbedoMode::Truecolor) << 7) // truecolor albedo
             | (u32::from(self.albedo_mode == AlbedoMode::Palette) << 2); // palette albedo
         self.queue
@@ -1763,13 +1776,18 @@ impl GpuRenderer {
         }
         {
             // Stage 1 GTAO — depth + normal → AO (cost varies by quality preset).
+            // Recorded even when AO is off so the timestamp slot stays valid;
+            // dispatched only when on (off = the whole cost vanishes and
+            // composite reads full visibility via dims.w bit3).
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("gtao pass"),
                 timestamp_writes: ts(1),
             });
-            pass.set_pipeline(&self.gtao_pipeline);
-            pass.set_bind_group(0, &gtao_bind, &[]);
-            pass.dispatch_workgroups(gx, gy, 1);
+            if self.gtao_enabled {
+                pass.set_pipeline(&self.gtao_pipeline);
+                pass.set_bind_group(0, &gtao_bind, &[]);
+                pass.dispatch_workgroups(gx, gy, 1);
+            }
         }
         // Stages 2,3 DNS1/DNS2 — edge-aware bilateral denoise (sharp then soft).
         for (stage, bind) in [(2u32, &denoise1_bind), (3u32, &denoise2_bind)] {
@@ -1777,9 +1795,11 @@ impl GpuRenderer {
                 label: Some("denoise pass"),
                 timestamp_writes: ts(stage),
             });
-            pass.set_pipeline(&self.denoise_pipeline);
-            pass.set_bind_group(0, bind, &[]);
-            pass.dispatch_workgroups(gx, gy, 1);
+            if self.gtao_enabled {
+                pass.set_pipeline(&self.denoise_pipeline);
+                pass.set_bind_group(0, bind, &[]);
+                pass.dispatch_workgroups(gx, gy, 1);
+            }
         }
         {
             // Stage 4 COMP — read G-buffer + denoised AO → shade → HDR colour.

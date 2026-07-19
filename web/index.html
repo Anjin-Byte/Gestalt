@@ -234,6 +234,10 @@
                sample count for speed; the ray-traced sun shadow is a real
                per-pixel cost, so it ships off by default on the web. -->
           <div class="rows" aria-label="effects">
+            <label class="row check">
+              <span>ambient occlusion</span>
+              <input type="checkbox" id="gtao-on" checked />
+            </label>
             <label class="row">
               <span>AO quality</span>
               <select id="gtao-quality">
@@ -243,9 +247,13 @@
                 <option value="3">ultra</option>
               </select>
             </label>
-            <label class="row check">
+            <label class="row">
               <span>sun shadows</span>
-              <input type="checkbox" id="shadows" />
+              <select id="shadows">
+                <option value="0" selected>off</option>
+                <option value="1">low</option>
+                <option value="2">high</option>
+              </select>
             </label>
           </div>
           <!-- The controls sheet: one row per action, keycaps right-aligned —
