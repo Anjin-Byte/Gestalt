@@ -197,9 +197,9 @@ pub struct Engine {
     /// The themed sky endpoints (top, bottom — sRGB RGBA8, R low), kept so a
     /// renderer recreation (install, promotion) re-applies the theme.
     sky: Option<(u32, u32)>,
-    /// Sun-shadow quality (0 off, 1 low = coarse brick trace, 2 high = exact
-    /// per-voxel trace) — web default OFF (a real per-pixel cost); the shell's
-    /// settings control re-applies it across renderer rebuilds.
+    /// Sun-shadow quality (0 off, 1 low = exact trace at ½×½ upsampled,
+    /// 2 high = exact full-res trace) — web default LOW; the shell's settings
+    /// control re-applies it across renderer rebuilds.
     shadow_quality: u32,
     /// Whether the GTAO term runs at all (off skips the AO + denoise passes).
     gtao_on: bool,
@@ -345,8 +345,9 @@ impl Engine {
         let table = MaterialTable::missing_only();
         let mut renderer =
             GpuRenderer::new(&ctx, &structure, &table).map_err(|e| JsError::new(&e.to_string()))?;
-        // Web defaults: shadows off (perf), AO on, Medium GTAO.
-        apply_shadow_quality(&mut renderer, 0);
+        // Web defaults: low (half-res) shadows, AO on, Medium GTAO — must
+        // match the `shadow_quality` field default above.
+        apply_shadow_quality(&mut renderer, 1);
 
         let (blit_pipeline, blit_layout, sampler) = blit::build_blit(&ctx.device, format);
         let output_view = blit::make_output(&ctx.device, width, height);
@@ -383,7 +384,7 @@ impl Engine {
             input: Input::default(),
             last_camera: orbit.to_gpu(orbit_frame, width, height, n, resolution.internal_levels()),
             brush_params: BrushParams::default(),
-            shadow_quality: 0, // web default: shadows off (perf)
+            shadow_quality: 1, // web default: low (half-res trace)
             gtao_on: true,
             gtao_preset: 1, // Medium
 
@@ -688,7 +689,7 @@ impl Engine {
     /// RGBA8, R low), dithered per pixel on the GPU so the subtle ramp never
     /// bands. The shell derives both colours from the live CSS theme tokens,
     /// so the canvas follows the stylesheet. Survives renderer recreation.
-    /// Sets the sun-shadow quality: `0` off (the web default), `1` low (the
+    /// Sets the sun-shadow quality: `0` off, `1` low (the web default: the
     /// exact trace at half resolution, bilateral-upsampled — ~4× fewer rays),
     /// `2` high (the exact full-resolution trace). Clamped; applies to the
     /// live renderer and to every renderer rebuilt on a later install.

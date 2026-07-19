@@ -426,10 +426,10 @@ describe("scene application and edit gating", () => {
 describe("lighting effects", () => {
   it("boots with AO on at medium and shadows off, and forwards changes to the host", () => {
     const { ui, host } = setup();
-    // Markup defaults: the web ships AO on, Medium quality, shadows off (perf).
+    // Markup defaults: the web ships AO on at Medium, shadows LOW (half-res).
     expect(ui.gtaoOn.checked).toBe(true);
     expect(ui.gtaoQuality.value).toBe("1");
-    expect(ui.shadows.value).toBe("0");
+    expect(ui.shadows.value).toBe("1");
 
     ui.gtaoOn.checked = false;
     ui.gtaoOn.dispatchEvent(new Event("change"));
@@ -1014,13 +1014,13 @@ describe("input and stats wiring", () => {
 });
 
 describe("panel docks", () => {
-  it("first run: brush and scene open, file and stats folded", () => {
+  it("first run: every panel folded (the canvas is the landing experience)", () => {
     const { ui } = setup();
-    expect(ui.panelEdit.hidden).toBe(false);
-    expect(ui.panelScene.hidden).toBe(false);
+    expect(ui.panelEdit.hidden).toBe(true);
+    expect(ui.panelScene.hidden).toBe(true);
     expect(ui.panelIo.hidden).toBe(true);
     expect(ui.panelStats.hidden).toBe(true);
-    expect(ui.toggleEdit.getAttribute("aria-expanded")).toBe("true");
+    expect(ui.toggleEdit.getAttribute("aria-expanded")).toBe("false");
     expect(ui.toggleIo.getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -1030,21 +1030,21 @@ describe("panel docks", () => {
     expect(ui.panelIo.hidden).toBe(false);
     expect(ui.toggleIo.getAttribute("aria-expanded")).toBe("true");
     ui.toggleEdit.click();
-    expect(ui.panelEdit.hidden).toBe(true);
+    expect(ui.panelEdit.hidden).toBe(false);
     // Independence: the others kept their state.
     expect(ui.panelIo.hidden).toBe(false);
-    expect(ui.panelScene.hidden).toBe(false);
+    expect(ui.panelScene.hidden).toBe(true);
     ui.toggleEdit.click();
-    expect(ui.panelEdit.hidden).toBe(false);
+    expect(ui.panelEdit.hidden).toBe(true);
   });
 
   it("persists each panel's choice across sessions", () => {
     const first = setup();
     first.ui.toggleStats.click(); // open stats
-    first.ui.toggleScene.click(); // fold scene
+    first.ui.toggleScene.click(); // open scene
     expect(JSON.parse(localStorage.getItem("voxel-web.panels") ?? "{}")).toEqual({
-      edit: true,
-      scene: false,
+      edit: false,
+      scene: true,
       io: false,
       stats: true,
       settings: false,
@@ -1053,13 +1053,14 @@ describe("panel docks", () => {
     mount();
     const second = setup();
     expect(second.ui.panelStats.hidden).toBe(false);
-    expect(second.ui.panelScene.hidden).toBe(true);
-    expect(second.ui.panelEdit.hidden).toBe(false);
+    expect(second.ui.panelScene.hidden).toBe(false);
+    expect(second.ui.panelEdit.hidden).toBe(true);
   });
 
   it("controls in a folded panel still work by hotkey (the dock hides, not disables)", () => {
     const { ui, host } = setup({ editable: true });
-    ui.toggleEdit.click(); // fold the brush panel
+    // The brush panel is folded by default — the hotkey must still reach it.
+    expect(ui.panelEdit.hidden).toBe(true);
     host.setBrushes.length = 0;
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit3", bubbles: true }));
     expect(host.setBrushes.at(-1)?.[0]).toBe(BrushTool.Clay);

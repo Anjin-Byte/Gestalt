@@ -29,7 +29,7 @@
       <div class="dock" id="dock-left">
         <div class="dock-toggles">
           <button id="toggle-edit" type="button" class="island dock-toggle"
-                  aria-controls="panel-edit" aria-expanded="true" title="brush">
+                  aria-controls="panel-edit" aria-expanded="false" title="brush">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
@@ -92,7 +92,7 @@
       <div class="dock" id="dock-right">
         <div class="dock-toggles">
           <button id="toggle-scene" type="button" class="island dock-toggle"
-                  aria-controls="panel-scene" aria-expanded="true" title="scene">
+                  aria-controls="panel-scene" aria-expanded="false" title="scene">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
@@ -250,8 +250,8 @@
             <label class="row">
               <span>sun shadows</span>
               <select id="shadows">
-                <option value="0" selected>off</option>
-                <option value="1">low</option>
+                <option value="0">off</option>
+                <option value="1" selected>low</option>
                 <option value="2">high</option>
               </select>
             </label>
