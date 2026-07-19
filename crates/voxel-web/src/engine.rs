@@ -214,11 +214,13 @@ pub struct Engine {
     last_dt_ms: f64,
 }
 
-/// Applies a shell shadow-quality level (0 off, 1 low/coarse, 2 high/exact)
-/// to a renderer's two shadow knobs.
+/// Applies a shell shadow-quality level to a renderer's shadow knobs:
+/// 0 off; 1 low = the EXACT trace at ½×½ resolution, joint-bilateral
+/// upsampled (~4× fewer rays, correct-shaped umbras); 2 high = the exact
+/// full-resolution trace.
 fn apply_shadow_quality(renderer: &mut GpuRenderer, quality: u32) {
     renderer.set_shadows(quality > 0);
-    renderer.set_coarse_shadows(quality == 1);
+    renderer.set_half_res_shadows(quality == 1);
 }
 
 /// The renderer-side GTAO params for a shell preset index (0 Low … 3 Ultra).
@@ -687,9 +689,9 @@ impl Engine {
     /// bands. The shell derives both colours from the live CSS theme tokens,
     /// so the canvas follows the stylesheet. Survives renderer recreation.
     /// Sets the sun-shadow quality: `0` off (the web default), `1` low (the
-    /// coarse brick-level trace — cheaper, slightly blockier umbras), `2` high
-    /// (the exact per-voxel trace). Clamped; applies to the live renderer and
-    /// to every renderer rebuilt on a later install.
+    /// exact trace at half resolution, bilateral-upsampled — ~4× fewer rays),
+    /// `2` high (the exact full-resolution trace). Clamped; applies to the
+    /// live renderer and to every renderer rebuilt on a later install.
     pub fn set_shadow_quality(&mut self, quality: u32) {
         self.shadow_quality = quality.min(2);
         if let Some(renderer) = &mut self.renderer {

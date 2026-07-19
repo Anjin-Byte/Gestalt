@@ -71,12 +71,13 @@ struct DenoiseParams {
 
 /// Number of render passes individually GPU-timed, each bracketed with its own
 /// begin/end timestamp (the Metal-portable pattern). In pass order.
-pub const NUM_TIMED_STAGES: usize = 7;
+pub const NUM_TIMED_STAGES: usize = 8;
 /// Short labels for the timed stages ([`NUM_TIMED_STAGES`]). Index matches
 /// [`GpuRenderer::last_stage_times_ns`], not execution order. `BLEND` dispatches
 /// nothing (≈0 ns) on scenes without transparency, so every slot stays valid.
-pub const RENDER_STAGE_LABELS: [&str; NUM_TIMED_STAGES] =
-    ["GBUF", "GTAO", "DNS1", "DNS2", "COMP", "TAA", "BLEND"];
+pub const RENDER_STAGE_LABELS: [&str; NUM_TIMED_STAGES] = [
+    "GBUF", "GTAO", "DNS1", "DNS2", "COMP", "TAA", "BLEND", "SHAD",
+];
 
 /// Reusable compute-pass timestamp resources (present iff the device supports
 /// `TIMESTAMP_QUERY`): a `2·NUM_TIMED_STAGES`-slot query set (begin/end per pass)
@@ -145,6 +146,9 @@ struct GBuf {
     ao_denoised: wgpu::Texture,
     ao_denoised_view: wgpu::TextureView, // denoise pass-2 output → composite
     #[allow(dead_code)]
+    shadow_lo: wgpu::Texture,
+    shadow_lo_view: wgpu::TextureView, // ½×½ sun-shadow (the low tier) → composite
+    #[allow(dead_code)]
     color: wgpu::Texture,
     color_view: wgpu::TextureView, // composite output (pre-TAA, HDR-ish)
     #[allow(dead_code)]
@@ -188,6 +192,9 @@ pub struct GpuRenderer {
     /// `albedo_mode`. Built unconditionally so it always naga-validates.
     palette_gbuffer_pipeline: wgpu::ComputePipeline,
     palette_gbuffer_layout: wgpu::BindGroupLayout,
+    /// The half-res shadow pass (the "low" tier's sole shadow trace).
+    shadow_lores_pipeline: wgpu::ComputePipeline,
+    shadow_lores_layout: wgpu::BindGroupLayout,
     gtao_pipeline: wgpu::ComputePipeline,
     gtao_layout: wgpu::BindGroupLayout,
     denoise_pipeline: wgpu::ComputePipeline,
@@ -265,8 +272,15 @@ pub struct GpuRenderer {
     shadows: bool,
     /// Toggle (default off): trace the shadow with the coarse brick-level
     /// `traverse_occluded` instead of the exact `traverse_ray` — cheaper,
-    /// slightly fatter/blockier umbras.
+    /// slightly fatter/blockier umbras. Superseded by [`set_half_res_shadows`]
+    /// as the cheap tier (coarse reads fragmented); kept as a debug knob.
+    ///
+    /// [`set_half_res_shadows`]: Self::set_half_res_shadows
     coarse_shadows: bool,
+    /// Toggle (default off): trace the EXACT shadow at ½×½ in a dedicated pass
+    /// and joint-bilateral-upsample it in composite — ~4× fewer shadow rays
+    /// with correct-shaped umbras. The "low" shadow-quality tier.
+    half_res_shadows: bool,
     /// Sun direction uniform (`vec4`: xyz dir + pad), shared by the G-buffer shadow
     /// ray and the composite direct-light term so they always agree.
     sun_buf: wgpu::Buffer,
@@ -703,6 +717,44 @@ impl GpuRenderer {
                 cache: None,
             });
 
+        // Pass 1c: the half-res shadow trace (the "low" tier). Concatenated
+        // after the traversal core so `traverse_ray` is in scope; reads the
+        // full-res G-buffer, writes the ½×½ shadow texture.
+        let shadow_lores_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow lores"),
+            source: wgpu::ShaderSource::Wgsl(
+                buffers::shader_source(include_str!("../shaders/shadow_lores.wgsl")).into(),
+            ),
+        });
+        let shadow_lores_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("shadow lores layout"),
+                entries: &[
+                    buffers::storage_entry(0, true), // nodes
+                    buffers::storage_entry(1, true), // leaf_words
+                    buffers::storage_entry(2, true), // leaf_bounds
+                    buffers::uniform_entry(3),       // camera
+                    sampled_tex_entry(4),            // depth in (full-res)
+                    sampled_tex_entry(5),            // normal in (full-res)
+                    buffers::uniform_entry(6),       // sun dir
+                    storage_tex_entry(7, AO_FORMAT), // half-res shadow out
+                ],
+            });
+        let shadow_lores_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("shadow lores pl"),
+            bind_group_layouts: &[Some(&shadow_lores_layout)],
+            immediate_size: 0,
+        });
+        let shadow_lores_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("shadow lores pipeline"),
+                layout: Some(&shadow_lores_pl),
+                module: &shadow_lores_shader,
+                entry_point: Some("shadow_lores_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
+
         // Pass 2: GTAO (read depth + normal → AO). Standalone module.
         let gtao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gtao"),
@@ -796,6 +848,7 @@ impl GpuRenderer {
                 storage_tex_entry(4, COLOR_FORMAT), // colour out (pre-TAA)
                 buffers::uniform_entry(5),          // sun dir
                 sampled_tex_entry(6),               // per-voxel albedo
+                sampled_tex_entry(7),               // half-res shadow (bit5 tier)
                 buffers::uniform_entry(10),         // themed sky gradient
             ],
         });
@@ -934,6 +987,8 @@ impl GpuRenderer {
             gbuffer_skip_pipeline,
             palette_gbuffer_pipeline,
             palette_gbuffer_layout,
+            shadow_lores_pipeline,
+            shadow_lores_layout,
             gtao_pipeline,
             gtao_layout,
             denoise_pipeline,
@@ -971,6 +1026,7 @@ impl GpuRenderer {
             denoise: true,
             shadows: true,
             coarse_shadows: false,
+            half_res_shadows: false,
             cursor_buf,
             sky_buf,
             sun_buf,
@@ -1051,6 +1107,13 @@ impl GpuRenderer {
         self.coarse_shadows = on;
     }
 
+    /// Traces the exact shadow at ½×½ resolution (composite joint-bilateral
+    /// upsamples it) — the "low" shadow-quality tier: ~4× fewer shadow rays,
+    /// correct-shaped umbras. Takes effect on the next render.
+    pub fn set_half_res_shadows(&mut self, on: bool) {
+        self.half_res_shadows = on;
+    }
+
     /// Sets the sun azimuth (radians) — the static sun's pose knob. Takes effect
     /// on the next render.
     pub fn set_sun_phase(&mut self, phase: f32) {
@@ -1096,6 +1159,23 @@ impl GpuRenderer {
             let (edges, edges_view) = make("gtao edges", AO_FORMAT, base);
             let (ao_pong, ao_pong_view) = make("gtao ao pong", AO_FORMAT, base);
             let (ao_denoised, ao_denoised_view) = make("gtao ao denoised", AO_FORMAT, base);
+            // Half-res (½×½) shadow target for the lores pass; rounded up so odd
+            // viewports still cover every full-res pixel on upsample.
+            let shadow_lo = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("lores shadow"),
+                size: wgpu::Extent3d {
+                    width: w.div_ceil(2),
+                    height: h.div_ceil(2),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: AO_FORMAT,
+                usage: base,
+                view_formats: &[],
+            });
+            let shadow_lo_view = shadow_lo.create_view(&wgpu::TextureViewDescriptor::default());
             let (color, color_view) = make("composite color", COLOR_FORMAT, base);
             let (color_blended, color_blended_view) = make("blended color", COLOR_FORMAT, base);
             let (h0, h0v) = make("taa history 0", COLOR_FORMAT, base);
@@ -1122,6 +1202,8 @@ impl GpuRenderer {
                 ao_pong_view,
                 ao_denoised,
                 ao_denoised_view,
+                shadow_lo,
+                shadow_lo_view,
                 color,
                 color_view,
                 color_blended,
@@ -1483,9 +1565,11 @@ impl GpuRenderer {
         // coarse (brick-level) shadow trace, bit2 = palette albedo, bit7 =
         // truecolor albedo. The caller's camera is copied, never mutated.
         let mut camera = *camera;
+        let half = self.half_res_shadows && self.shadows;
         camera.dims[3] = u32::from(self.shadows)
             | (u32::from(self.coarse_shadows) << 1)
             | (u32::from(!self.gtao_enabled) << 3) // AO disabled → composite reads 1.0
+            | (u32::from(half) << 5) // half-res tier: lores pass owns the trace
             | (u32::from(self.albedo_mode == AlbedoMode::Truecolor) << 7) // truecolor albedo
             | (u32::from(self.albedo_mode == AlbedoMode::Palette) << 2); // palette albedo
         self.queue
@@ -1618,6 +1702,20 @@ impl GpuRenderer {
                 ],
             })
         };
+        let shadow_lores_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow lores bind"),
+            layout: &self.shadow_lores_layout,
+            entries: &[
+                buffers::bind(0, self.node_buf.as_entire_binding()),
+                buffers::bind(1, self.leaf_buf.as_entire_binding()),
+                buffers::bind(2, self.bounds_buf.as_entire_binding()),
+                buffers::bind(3, self.camera_buf.as_entire_binding()),
+                buffers::bind(4, wgpu::BindingResource::TextureView(&gbuf.depth_view)),
+                buffers::bind(5, wgpu::BindingResource::TextureView(&gbuf.normal_view)),
+                buffers::bind(6, self.sun_buf.as_entire_binding()),
+                buffers::bind(7, wgpu::BindingResource::TextureView(&gbuf.shadow_lo_view)),
+            ],
+        });
         let gtao_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gtao bind"),
             layout: &self.gtao_layout,
@@ -1675,6 +1773,7 @@ impl GpuRenderer {
                 buffers::bind(4, wgpu::BindingResource::TextureView(&gbuf.color_view)),
                 buffers::bind(5, self.sun_buf.as_entire_binding()),
                 buffers::bind(6, wgpu::BindingResource::TextureView(&gbuf.albedo_view)),
+                buffers::bind(7, wgpu::BindingResource::TextureView(&gbuf.shadow_lo_view)),
                 buffers::bind(10, self.sky_buf.as_entire_binding()),
             ],
         });
@@ -1773,6 +1872,25 @@ impl GpuRenderer {
             pass.set_pipeline(gbuffer_pipeline);
             pass.set_bind_group(0, &gbuffer_bind, &[]);
             pass.dispatch_workgroups(gx, gy, 1);
+        }
+        {
+            // Stage 7 SHAD — the half-res shadow trace (the "low" tier's sole
+            // trace; the G-buffer skipped its inline ray). Recorded even when
+            // off so the timestamp slot stays valid; dispatched at ½×½ only
+            // when the tier is active.
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("shadow lores pass"),
+                timestamp_writes: ts(7),
+            });
+            if half {
+                pass.set_pipeline(&self.shadow_lores_pipeline);
+                pass.set_bind_group(0, &shadow_lores_bind, &[]);
+                pass.dispatch_workgroups(
+                    width.div_ceil(2).div_ceil(8),
+                    height.div_ceil(2).div_ceil(8),
+                    1,
+                );
+            }
         }
         {
             // Stage 1 GTAO — depth + normal → AO (cost varies by quality preset).

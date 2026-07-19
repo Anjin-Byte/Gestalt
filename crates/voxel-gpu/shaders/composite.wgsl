@@ -15,7 +15,7 @@ struct Camera {
     n: f32,
     up: vec3<f32>,
     _pad: f32,
-    dims: vec4<u32>, // width, height, k, flags (bit2 palette, bit3 AO off, bit7 truecolor)
+    dims: vec4<u32>, // width, height, k, flags (bit2 palette, bit3 AO off, bit5 half-res shadow, bit7 truecolor)
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -30,10 +30,109 @@ struct Camera {
 // When set, the shaded albedo is this (sRGB→linear decoded) instead of the
 // position-hash tint.
 @group(0) @binding(6) var gbuf_albedo: texture_2d<f32>;
+// The ½×½ sun-shadow from the lores pass (dims.w bit5 — the "low" shadow
+// tier). Read with the joint-bilateral upsample below; ignored otherwise.
+@group(0) @binding(7) var shadow_lores: texture_2d<f32>;
 
 const SUN_COLOR: vec3<f32> = vec3<f32>(1.0, 0.96, 0.88);
 const SKY_COLOR: vec3<f32> = vec3<f32>(0.42, 0.47, 0.58);
 const GROUND_COLOR: vec3<f32> = vec3<f32>(0.16, 0.15, 0.13);
+
+// Joint-bilateral upsample of the half-res shadow: lo-res taps are gated by
+// depth AND normal similarity to this full-res pixel. The depth gate stops
+// silhouette halos; the normal gate stops the bright edge fringe where a lit
+// face abuts a shadowed face at ~equal depth (a voxel edge) — without it the
+// depth gate can't tell the two faces apart and bleeds light in.
+const SHADOW_UPSAMPLE_DEPTH_REL: f32 = 0.04;
+const SHADOW_UPSAMPLE_NORMAL_MIN: f32 = 0.5; // reject neighbours >60° apart (diff face)
+
+// Anisotropic upsample: on a grazing surface (large screen-space depth
+// gradient) the ½-res shadow aliases (moiré); widen the gather ALONG the
+// gradient (the grazing direction) so more lo-res samples average →
+// band-limited. Off the grazing axis it stays ~bilinear, so head-on shadows
+// aren't over-blurred.
+const SHADOW_ANISO_TAPS: i32 = 4;       // 2·this+1 taps along the grazing axis
+const SHADOW_ANISO_SCALE: f32 = 300.0;  // grazing-ness → footprint length (tunable)
+const SHADOW_ANISO_MAX: f32 = 10.0;     // max footprint (full-res px)
+
+// Whether lo-res texel `q` is the same surface as the full-res pixel — the
+// joint gate shared by both upsamplers. `src` is the full-res pixel the lo-res
+// texel was actually traced at (2·q).
+fn lores_same_surface(q: vec2<i32>, fullhi: vec2<i32>, depth: f32, normal: vec3<f32>) -> bool {
+    let src = clamp(q * 2, vec2<i32>(0), fullhi);
+    let qz = textureLoad(gbuf_depth, src, 0).x;
+    let qn = textureLoad(gbuf_normal, src, 0).xyz * 2.0 - 1.0;
+    return qz > 0.0
+        && abs(qz - depth) <= depth * SHADOW_UPSAMPLE_DEPTH_REL
+        && dot(qn, normal) >= SHADOW_UPSAMPLE_NORMAL_MIN;
+}
+
+// Bilinear joint-bilateral upsample: the 4 nearest lo-res texels,
+// bilinear-weighted, each gated to the same surface.
+fn shadow_bilinear(coord: vec2<i32>, fullhi: vec2<i32>, depth: f32, normal: vec3<f32>) -> f32 {
+    let lo = textureDimensions(shadow_lores);
+    let hi = vec2<i32>(i32(lo.x) - 1, i32(lo.y) - 1);
+    let lf = vec2<f32>(f32(coord.x), f32(coord.y)) * 0.5;
+    let l0 = vec2<i32>(i32(floor(lf.x)), i32(floor(lf.y)));
+    let fr = lf - vec2<f32>(f32(l0.x), f32(l0.y));
+    var ssum = 0.0;
+    var wsum = 0.0;
+    for (var j = 0; j <= 1; j = j + 1) {
+        for (var i = 0; i <= 1; i = i + 1) {
+            let q = clamp(l0 + vec2<i32>(i, j), vec2<i32>(0), hi);
+            let bw = select(1.0 - fr.x, fr.x, i == 1) * select(1.0 - fr.y, fr.y, j == 1);
+            if (lores_same_surface(q, fullhi, depth, normal)) {
+                ssum = ssum + bw * textureLoad(shadow_lores, q, 0).x;
+                wsum = wsum + bw;
+            }
+        }
+    }
+    if (wsum > 0.0) {
+        return ssum / wsum;
+    }
+    let nn = clamp(vec2<i32>(i32(round(lf.x)), i32(round(lf.y))), vec2<i32>(0), hi);
+    return textureLoad(shadow_lores, nn, 0).x;
+}
+
+// Anisotropic joint-bilateral upsample: gather taps along the screen
+// depth-gradient (grazing) direction, length scaled by grazing-ness, each gated.
+fn shadow_aniso(coord: vec2<i32>, fullhi: vec2<i32>, depth: f32, normal: vec3<f32>) -> f32 {
+    let lo = textureDimensions(shadow_lores);
+    let hi = vec2<i32>(i32(lo.x) - 1, i32(lo.y) - 1);
+    let dxp = textureLoad(gbuf_depth, clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), fullhi), 0).x;
+    let dxm = textureLoad(gbuf_depth, clamp(coord - vec2<i32>(1, 0), vec2<i32>(0), fullhi), 0).x;
+    let dyp = textureLoad(gbuf_depth, clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), fullhi), 0).x;
+    let dym = textureLoad(gbuf_depth, clamp(coord - vec2<i32>(0, 1), vec2<i32>(0), fullhi), 0).x;
+    let grad = vec2<f32>(dxp - dxm, dyp - dym) * 0.5;
+    let gmag = length(grad);
+    let span = clamp(gmag / max(depth, 1.0) * SHADOW_ANISO_SCALE, 1.0, SHADOW_ANISO_MAX);
+    // Head-on (little depth gradient) → isotropic bilinear; only stretch the
+    // kernel on grazing surfaces, where the ½-res shadow actually aliases.
+    if (span < 1.5) {
+        return shadow_bilinear(coord, fullhi, depth, normal);
+    }
+    let dir = select(vec2<f32>(1.0, 0.0), grad / max(gmag, 1e-6), gmag > 1.0e-4);
+    var ssum = 0.0;
+    var wsum = 0.0;
+    for (var i = -SHADOW_ANISO_TAPS; i <= SHADOW_ANISO_TAPS; i = i + 1) {
+        let fpos = vec2<f32>(f32(coord.x), f32(coord.y)) + dir * (f32(i) * span);
+        let q = clamp(
+            vec2<i32>(i32(floor(fpos.x * 0.5)), i32(floor(fpos.y * 0.5))),
+            vec2<i32>(0),
+            hi,
+        );
+        if (lores_same_surface(q, fullhi, depth, normal)) {
+            let fi = f32(i) / f32(SHADOW_ANISO_TAPS + 1);
+            let wgt = exp(-2.0 * fi * fi);
+            ssum = ssum + wgt * textureLoad(shadow_lores, q, 0).x;
+            wsum = wsum + wgt;
+        }
+    }
+    if (wsum > 0.0) {
+        return ssum / wsum;
+    }
+    return textureLoad(shadow_lores, clamp(coord / 2, vec2<i32>(0), hi), 0).x;
+}
 
 @compute @workgroup_size(8, 8)
 fn composite_main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -49,9 +148,16 @@ fn composite_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (depth > 0.0) {
         let ntex = textureLoad(gbuf_normal, coord, 0);
         let normal = ntex.xyz * 2.0 - 1.0;
-        // Sun visibility [0,1]: the G-buffer's inline ray-traced hard shadow
-        // (1.0 whenever shadows are off — the write default).
-        let shadow = ntex.a;
+        // Sun visibility [0,1]. Half-res tier (dims.w bit5): anisotropic
+        // joint-bilateral upsample of the ½×½ lores trace. Else: the G-buffer's
+        // inline full-res trace in normal.a (1.0 whenever shadows are off —
+        // the write default).
+        var shadow = ntex.a;
+        if ((camera.dims.w & 32u) != 0u) {
+            let fullhi = vec2<i32>(i32(width) - 1, i32(height) - 1);
+            let normal_for_gate = ntex.xyz * 2.0 - 1.0;
+            shadow = shadow_aniso(coord, fullhi, depth, normal_for_gate);
+        }
         let sun = normalize(sun_dir.xyz);
         let ndl = max(dot(normal, sun), 0.0);
         let up = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);

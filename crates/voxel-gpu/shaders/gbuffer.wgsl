@@ -92,11 +92,13 @@ fn shade_gbuffer_hit(hit: HitResult, dir: vec3<f32>, gid: vec3<u32>) {
         // surfaces (back-facing get no direct sun anyway). Offset along the face
         // normal so the ray starts outside the hit voxel (no self-shadow acne).
         // dims.w packs the shadow flags: bit0 = shadows enabled, bit1 = coarse
-        // (brick-level traverse_occluded) vs fine (full traverse_ray).
+        // (brick-level traverse_occluded) vs fine (full traverse_ray), bit5 =
+        // half-res — the lores pass owns the trace, so the G-buffer skips it.
         let shadows_on = (camera.dims.w & 1u) != 0u;
         let coarse = (camera.dims.w & 2u) != 0u;
+        let half_res = (camera.dims.w & 32u) != 0u;
         let sun = normalize(sun_dir.xyz);
-        if (shadows_on && dot(nrm, sun) > 0.0) {
+        if (shadows_on && !half_res && dot(nrm, sun) > 0.0) {
             let world_pos = camera.eye + dir * face.w;
             var occ: u32;
             if (coarse) {

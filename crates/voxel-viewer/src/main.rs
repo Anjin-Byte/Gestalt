@@ -292,8 +292,8 @@ struct Viewer {
     denoise: bool,
     /// Toggle (`O`): the GTAO term itself (off skips the AO + denoise passes).
     gtao_on: bool,
-    /// Shadow quality cycled by `K`: 0 off, 1 low (coarse brick-level trace),
-    /// 2 high (exact per-voxel trace).
+    /// Shadow quality cycled by `K`: 0 off, 1 low (exact trace at ½×½,
+    /// bilateral-upsampled), 2 high (exact full-resolution trace).
     shadow_quality: u8,
     resolution: Resolution,
     /// HUD label for the current scene: the fixture name, or the mesh filename.
@@ -599,10 +599,10 @@ impl Viewer {
                 is_movement = false;
             }
             KeyCode::KeyK if pressed => {
-                // Cycle shadow quality: off → low (coarse) → high (exact).
+                // Cycle shadow quality: off → low (half-res) → high (full).
                 self.shadow_quality = (self.shadow_quality + 1) % 3;
                 self.renderer.set_shadows(self.shadow_quality > 0);
-                self.renderer.set_coarse_shadows(self.shadow_quality == 1);
+                self.renderer.set_half_res_shadows(self.shadow_quality == 1);
                 is_movement = false;
             }
             KeyCode::KeyO if pressed => {
