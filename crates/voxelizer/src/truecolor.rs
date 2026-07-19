@@ -23,14 +23,14 @@ use glam::{Mat4, Vec2, Vec3};
 use voxel_core::{MISSING_MAGENTA, SchoolBBuffer, SparseTree};
 
 use crate::appearance::{AlphaMode, Texture, WrapMode};
-use crate::bake::{ColorCandidate, bake_nearest_owner};
+use crate::bake::{ColorCandidate, bake_nearest_owner_bounded};
 use crate::core::{CompactVoxel, MeshAppearance, MeshInput, VoxelGrid};
 use crate::csr::{BrickTriangleCsr, build_brick_csr};
 
 /// Resolves a material id to its base-colour texture, wrap modes, and linear
 /// factor. An out-of-range id (e.g. the glTF default `u32::MAX`) or a mesh with no
 /// appearance falls back to a flat white tint.
-fn resolve_material(
+pub(crate) fn resolve_material(
     appearance: Option<&MeshAppearance>,
     mat_id: u32,
 ) -> (Option<&Texture>, (WrapMode, WrapMode), [f32; 4]) {
@@ -55,7 +55,7 @@ fn resolve_material(
 /// ignored, voxel kept). Used by the MASK-cutout cull and the bake's opaque-alpha
 /// force; kept separate from [`resolve_material`] so the per-candidate colour path
 /// stays a 3-tuple.
-fn material_alpha(appearance: Option<&MeshAppearance>, mat_id: u32) -> (AlphaMode, f32) {
+pub(crate) fn material_alpha(appearance: Option<&MeshAppearance>, mat_id: u32) -> (AlphaMode, f32) {
     appearance
         .and_then(|app| {
             usize::try_from(mat_id)
@@ -69,7 +69,7 @@ fn material_alpha(appearance: Option<&MeshAppearance>, mat_id: u32) -> (AlphaMod
 
 /// The global material id of triangle `ti` from the `packed` stream (2 tris/`u32`,
 /// from `material_table_for_sparse`), or 0 when absent.
-fn tri_global_mat(packed: Option<&[u32]>, ti: usize) -> u16 {
+pub(crate) fn tri_global_mat(packed: Option<&[u32]>, ti: usize) -> u16 {
     packed.and_then(|p| p.get(ti >> 1)).map_or(0, |&w| {
         u16::try_from((w >> ((ti & 1) * 16)) & 0xFFFF).unwrap_or(0)
     })
@@ -80,6 +80,65 @@ fn tri_global_mat(packed: Option<&[u32]>, ti: usize) -> u16 {
 /// material) — the per-brick step shared by [`bake_leaf_colors`] and the MASK cull.
 /// Pure of occupancy: it depends only on the mesh, grid, and brick CSR.
 #[allow(clippy::too_many_arguments)]
+/// One brick's colour-owner candidates plus the search-acceleration data the
+/// per-voxel loop reads: per-candidate bounding `(centroid, radius)` for the
+/// argmin early-out, and candidate indices bucketed by global material so the
+/// same-material constraint indexes a slice instead of copying candidates per
+/// voxel. Refilled per brick (the assembler walks voxels leaf-by-leaf, so this
+/// amortizes over up to 512 voxels).
+#[derive(Default)]
+struct BrickCandidates<'a> {
+    buf: Vec<ColorCandidate<'a>>,
+    mats: Vec<u16>,
+    /// Per-candidate `(centroid, bounding radius)` in grid space.
+    geom: Vec<(Vec3, f32)>,
+    /// Candidate indices sorted by `(material, index)` — each material's
+    /// bucket is a contiguous run, ascending index within it.
+    order: Vec<u32>,
+    /// `(material, start, end)` runs into `order`.
+    runs: Vec<(u16, u32, u32)>,
+}
+
+impl BrickCandidates<'_> {
+    /// The candidate indices for `mat`, or `None` when the brick has no
+    /// same-material candidate (the caller falls back to [`Self::all`]).
+    fn indices_for(&self, mat: u16) -> Option<&[u32]> {
+        self.runs
+            .binary_search_by_key(&mat, |&(m, _, _)| m)
+            .ok()
+            .map(|ri| {
+                let (_, lo, hi) = self.runs[ri];
+                &self.order[lo as usize..hi as usize]
+            })
+    }
+
+    /// Every candidate index (bucket order — the argmin is order-independent).
+    fn all(&self) -> &[u32] {
+        &self.order
+    }
+
+    /// Rebuilds the buckets after the buffers are refilled.
+    fn finalize(&mut self) {
+        self.order.clear();
+        self.runs.clear();
+        #[allow(clippy::cast_possible_truncation)] // per-brick candidate counts
+        self.order.extend(0..self.buf.len() as u32);
+        self.order
+            .sort_unstable_by_key(|&i| (self.mats[i as usize], i));
+        let mut start = 0usize;
+        while start < self.order.len() {
+            let mat = self.mats[self.order[start] as usize];
+            let mut end = start + 1;
+            while end < self.order.len() && self.mats[self.order[end] as usize] == mat {
+                end += 1;
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            self.runs.push((mat, start as u32, end as u32));
+            start = end;
+        }
+    }
+}
+
 fn gather_brick_candidates<'a>(
     brick: [u32; 3],
     mesh: &MeshInput,
@@ -87,11 +146,11 @@ fn gather_brick_candidates<'a>(
     csr: &BrickTriangleCsr,
     appearance: Option<&'a MeshAppearance>,
     packed: Option<&[u32]>,
-    cand_buf: &mut Vec<ColorCandidate<'a>>,
-    cand_mat: &mut Vec<u16>,
+    out: &mut BrickCandidates<'a>,
 ) {
-    cand_buf.clear();
-    cand_mat.clear();
+    out.buf.clear();
+    out.mats.clear();
+    out.geom.clear();
     // brick_origins is sorted by (z, y, x); search with the same key.
     let key = [brick[2], brick[1], brick[0]];
     let Ok(bi) = csr
@@ -123,7 +182,12 @@ fn gather_brick_candidates<'a>(
             .unwrap_or([Vec2::ZERO; 3]);
         let mat_id = mat_ids.and_then(|m| m.get(ti)).copied().unwrap_or(u32::MAX);
         let (texture, wrap, factor) = resolve_material(appearance, mat_id);
-        cand_buf.push(ColorCandidate {
+        let centroid = (verts[0] + verts[1] + verts[2]) / 3.0;
+        let radius = verts
+            .iter()
+            .map(|&v| (v - centroid).length())
+            .fold(0.0f32, f32::max);
+        out.buf.push(ColorCandidate {
             tri_index: ti,
             verts,
             uvs: uv,
@@ -131,38 +195,27 @@ fn gather_brick_candidates<'a>(
             wrap,
             factor,
         });
-        cand_mat.push(tri_global_mat(packed, ti));
+        out.mats.push(tri_global_mat(packed, ti));
+        out.geom.push((centroid, radius));
     }
+    out.finalize();
 }
 
 /// Picks the nearest-surface owner among the brick candidates, constrained to the
 /// voxel's own global material when `vox_mat` is `Some` (the wrong-region atlas
 /// guard). Returns `(owner triangle index, baked sRGB RGBA8)`, or `None` when the
 /// brick has no candidate. `filtered` is a reusable same-material scratch buffer.
-fn pick_owner<'a>(
+fn pick_owner(
     centre: Vec3,
-    cand_buf: &[ColorCandidate<'a>],
-    cand_mat: &[u16],
+    brick: &BrickCandidates<'_>,
     vox_mat: Option<u16>,
-    filtered: &mut Vec<ColorCandidate<'a>>,
 ) -> Option<(usize, [u8; 4])> {
-    let pick: &[ColorCandidate] = if let Some(vm) = vox_mat {
-        filtered.clear();
-        for (cand, &m) in cand_buf.iter().zip(cand_mat.iter()) {
-            if m == vm {
-                filtered.push(*cand);
-            }
-        }
-        // No same-material candidate (a binning edge) → fall back to all candidates.
-        if filtered.is_empty() {
-            cand_buf
-        } else {
-            filtered
-        }
-    } else {
-        cand_buf
-    };
-    bake_nearest_owner(centre, pick).map(|(i, color)| (pick[i].tri_index, color))
+    // No same-material candidate (a binning edge) → fall back to all candidates.
+    let indices = vox_mat
+        .and_then(|vm| brick.indices_for(vm))
+        .unwrap_or_else(|| brick.all());
+    bake_nearest_owner_bounded(centre, &brick.buf, &brick.geom, indices)
+        .map(|(i, color)| (brick.buf[i].tri_index, color))
 }
 
 /// Bakes `buffer`'s compact per-voxel truecolor from `mesh` (which must carry UVs +
@@ -192,7 +245,11 @@ pub fn bake_leaf_colors(
     grid: &VoxelGrid,
     epsilon: f32,
     packed: Option<&[u32]>,
+    progress: &mut voxel_core::Progress<'_>,
 ) {
+    // The assembler visits exactly one colour per occupied voxel, so the
+    // occupancy popcount is the meter's total.
+    let mut meter = progress.meter(tree.occupied_voxels());
     let csr = build_brick_csr(mesh, grid, 8, epsilon);
     // Work in GRID space (voxel centres are integer+0.5). `world_to_grid` is a
     // uniform scale, so closest-point distance argmin and the interpolated UV are
@@ -202,33 +259,23 @@ pub fn bake_leaf_colors(
     let mat_ids = mesh.material_ids.as_deref();
     let magenta = MISSING_MAGENTA.to_le_bytes();
 
-    // Memoized per-brick candidates (GRID-space verts) + global materials. The
+    // Memoized per-brick candidates (GRID-space verts) + buckets + bounds. The
     // assembler walks voxels leaf-by-leaf, so the memo hits within each brick.
-    let mut cand_buf: Vec<ColorCandidate> = Vec::new();
-    let mut cand_mat: Vec<u16> = Vec::new();
-    let mut filtered: Vec<ColorCandidate> = Vec::new(); // same-material candidate scratch
+    let mut cands = BrickCandidates::default();
     let mut last_brick: Option<[u32; 3]> = None;
 
     buffer.assemble_leaf_color(tree, |c| {
+        meter.add(1);
         let brick = [c.x & !7u32, c.y & !7u32, c.z & !7u32];
         if last_brick != Some(brick) {
-            gather_brick_candidates(
-                brick,
-                mesh,
-                &to_grid,
-                &csr,
-                appearance,
-                packed,
-                &mut cand_buf,
-                &mut cand_mat,
-            );
+            gather_brick_candidates(brick, mesh, &to_grid, &csr, appearance, packed, &mut cands);
             last_brick = Some(brick);
         }
         let centre = Vec3::new(c.x as f32 + 0.5, c.y as f32 + 0.5, c.z as f32 + 0.5);
         // Constrain the owner to the voxel's own occupancy material (D2) when a
         // packed stream is present; empty brick → magenta.
         let vox_mat = packed.is_some().then(|| tree.material_at(c));
-        match pick_owner(centre, &cand_buf, &cand_mat, vox_mat, &mut filtered) {
+        match pick_owner(centre, &cands, vox_mat) {
             Some((owner_ti, mut color)) => {
                 // Force opaque alpha unless the owner material is BLEND. OPAQUE
                 // ignores alpha, a kept MASK voxel is binary-opaque (above cutoff);
@@ -266,6 +313,7 @@ pub fn cull_mask_cutout(
     grid: &VoxelGrid,
     epsilon: f32,
     packed: Option<&[u32]>,
+    progress: &mut voxel_core::Progress<'_>,
 ) -> Vec<CompactVoxel> {
     let appearance = mesh.appearance.as_ref();
     let mat_ids = mesh.material_ids.as_deref();
@@ -291,13 +339,13 @@ pub fn cull_mask_cutout(
 
     let csr = build_brick_csr(mesh, grid, 8, epsilon);
     let to_grid = grid.world_to_grid_matrix();
-    let mut cand_buf: Vec<ColorCandidate> = Vec::new();
-    let mut cand_mat: Vec<u16> = Vec::new();
-    let mut filtered: Vec<ColorCandidate> = Vec::new();
+    let mut cands = BrickCandidates::default();
     let mut last_brick: Option<[u32; 3]> = None;
     let mut out: Vec<CompactVoxel> = Vec::with_capacity(voxels.len());
 
+    let mut meter = progress.meter(voxels.len() as u64);
     for &v in voxels {
+        meter.add(1);
         // Out-of-bounds coords are kept; `tree_from_compact` drops them.
         if v.vx < 0 || v.vy < 0 || v.vz < 0 {
             out.push(v);
@@ -315,16 +363,7 @@ pub fn cull_mask_cutout(
         let coord = [v.vx as u32, v.vy as u32, v.vz as u32];
         let brick = [coord[0] & !7u32, coord[1] & !7u32, coord[2] & !7u32];
         if last_brick != Some(brick) {
-            gather_brick_candidates(
-                brick,
-                mesh,
-                &to_grid,
-                &csr,
-                appearance,
-                packed,
-                &mut cand_buf,
-                &mut cand_mat,
-            );
+            gather_brick_candidates(brick, mesh, &to_grid, &csr, appearance, packed, &mut cands);
             last_brick = Some(brick);
         }
         let centre = Vec3::new(
@@ -334,7 +373,7 @@ pub fn cull_mask_cutout(
         );
         // Keep if the owner texel is at/above the MASK cutoff (or there's no owner —
         // a binning edge the bake would magenta, not our call to cull).
-        let keep = match pick_owner(centre, &cand_buf, &cand_mat, Some(global_id), &mut filtered) {
+        let keep = match pick_owner(centre, &cands, Some(global_id)) {
             Some((_, color)) => f32::from(color[3]) >= cutoff * 255.0,
             None => true,
         };
@@ -365,6 +404,131 @@ mod tests {
             ],
         )
         .expect("2x2 checker is a valid texture")
+    }
+
+    /// End-to-end differential: the production bake (buckets + bounds + LUT)
+    /// against a test-local naive reference — per voxel, filter ALL candidates
+    /// to the voxel's material (falling back to all when none match) and run
+    /// the naive argmin. A multi-material scene in one brick region, so brick
+    /// binning is total and the reference is exact. This is the harness shape
+    /// the GPU bake will diff through.
+    #[test]
+    #[allow(clippy::too_many_lines)] // one scene, one reference, one loop — splitting obscures
+    fn production_bake_matches_naive_reference() {
+        use crate::bake::bake_nearest_owner;
+        use crate::materials::material_table_for_sparse;
+
+        let r = Resolution::new(8).unwrap();
+        let grid = VoxelGrid::new(r, Vec3::ZERO, 1.0);
+        // Two overlapping triangles with different materials/textures.
+        let tris = vec![
+            [
+                Vec3::new(0.0, 0.0, 1.0),
+                Vec3::new(8.0, 0.0, 1.0),
+                Vec3::new(0.0, 8.0, 1.0),
+            ],
+            [
+                Vec3::new(0.0, 0.0, 2.0),
+                Vec3::new(8.0, 0.0, 2.0),
+                Vec3::new(0.0, 8.0, 2.0),
+            ],
+        ];
+        let uv = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.0, 1.0),
+        ];
+        let mesh = MeshInput {
+            triangles: tris.clone(),
+            material_ids: Some(vec![0, 1]),
+            uvs: Some(vec![uv, uv]),
+            appearance: Some(MeshAppearance {
+                textures: vec![checker()],
+                materials: vec![
+                    MaterialDef {
+                        name: None,
+                        base_color_texture: Some(0),
+                        base_color_factor: [1.0, 1.0, 1.0, 1.0],
+                        wrap_s: WrapMode::ClampToEdge,
+                        wrap_t: WrapMode::ClampToEdge,
+                        alpha_mode: AlphaMode::Opaque,
+                        alpha_cutoff: 0.5,
+                    },
+                    MaterialDef {
+                        name: None,
+                        base_color_texture: Some(0),
+                        base_color_factor: [0.5, 0.25, 1.0, 1.0],
+                        wrap_s: WrapMode::Repeat,
+                        wrap_t: WrapMode::Repeat,
+                        alpha_mode: AlphaMode::Opaque,
+                        alpha_cutoff: 0.5,
+                    },
+                ],
+            }),
+        };
+        let (_table, packed) = material_table_for_sparse(&mesh).expect("materials pack");
+        let global_of = |ti: usize| tri_global_mat(Some(&packed), ti);
+
+        // Voxels near each surface, materials mixed; one voxel carries a
+        // global id with no candidate (exercises the fall-back-to-all rule).
+        let voxels = [
+            (VoxelCoord::new(1, 1, 1), global_of(0)),
+            (VoxelCoord::new(4, 2, 1), global_of(0)),
+            (VoxelCoord::new(1, 1, 2), global_of(1)),
+            (VoxelCoord::new(2, 4, 2), global_of(1)),
+            (VoxelCoord::new(6, 6, 4), 999u16), // no such material → fallback
+        ];
+        let tree = SparseTree::from_voxels(r, voxels.iter().copied());
+        let mut buffer = SchoolBBuffer::from_sparse(&tree);
+        bake_leaf_colors(
+            &mut buffer,
+            &tree,
+            &mesh,
+            &grid,
+            0.5,
+            Some(&packed),
+            &mut voxel_core::Progress::none(),
+        );
+
+        // Naive reference: all candidates, filtered per voxel by material.
+        let to_grid = grid.world_to_grid_matrix();
+        let mut all = BrickCandidates::default();
+        let csr = build_brick_csr(&mesh, &grid, 8, 0.5);
+        gather_brick_candidates(
+            [0, 0, 0],
+            &mesh,
+            &to_grid,
+            &csr,
+            mesh.appearance.as_ref(),
+            Some(&packed),
+            &mut all,
+        );
+        assert_eq!(all.buf.len(), 2, "both triangles must bin to the brick");
+
+        for &(c, vm) in &voxels {
+            let slot = tree.leaf_slot_of(c).expect("occupied") as usize;
+            let base = buffer.leaf_color_base_words()[slot];
+            let leaf = buffer.leaves()[slot];
+            let rank =
+                leaf.occupied_rank(voxel_core::morton::encode_brick(c.x & 7, c.y & 7, c.z & 7));
+            let got = buffer.leaf_color_words()[(base + rank) as usize];
+
+            let centre = Vec3::new(c.x as f32 + 0.5, c.y as f32 + 0.5, c.z as f32 + 0.5);
+            let same: Vec<ColorCandidate> = all
+                .buf
+                .iter()
+                .zip(all.mats.iter())
+                .filter(|&(_, &m)| m == vm)
+                .map(|(cand, _)| *cand)
+                .collect();
+            let pick: &[ColorCandidate] = if same.is_empty() { &all.buf } else { &same };
+            let (_, want) = bake_nearest_owner(centre, pick).expect("candidates exist");
+            assert_eq!(
+                got,
+                u32::from_le_bytes(want),
+                "voxel {c:?} (mat {vm}) diverged from the naive reference"
+            );
+        }
     }
 
     #[test]
@@ -415,7 +579,15 @@ mod tests {
         let tree = SparseTree::from_voxels(r, voxels.iter().map(|&c| (c, 0u16)));
         let mut buffer = SchoolBBuffer::from_sparse(&tree);
 
-        bake_leaf_colors(&mut buffer, &tree, &mesh, &grid, 0.0, None);
+        bake_leaf_colors(
+            &mut buffer,
+            &tree,
+            &mesh,
+            &grid,
+            0.0,
+            None,
+            &mut voxel_core::Progress::none(),
+        );
         assert!(buffer.has_leaf_color());
 
         // For every occupied voxel, the stored colour must equal the oracle.
@@ -474,7 +646,15 @@ mod tests {
         let voxels = [VoxelCoord::new(2, 2, 2)];
         let tree = SparseTree::from_voxels(r, voxels.iter().map(|&c| (c, 0u16)));
         let mut buffer = SchoolBBuffer::from_sparse(&tree);
-        bake_leaf_colors(&mut buffer, &tree, &mesh, &grid, 0.0, None);
+        bake_leaf_colors(
+            &mut buffer,
+            &tree,
+            &mesh,
+            &grid,
+            0.0,
+            None,
+            &mut voxel_core::Progress::none(),
+        );
         assert_eq!(
             buffer.leaf_color_words()[0],
             MISSING_MAGENTA,
@@ -533,7 +713,14 @@ mod tests {
             (mesh, packed)
         };
         let cull = |mesh: &MeshInput, packed: &[u32]| {
-            cull_mask_cutout(&voxels, mesh, &grid, 0.0, Some(packed))
+            cull_mask_cutout(
+                &voxels,
+                mesh,
+                &grid,
+                0.0,
+                Some(packed),
+                &mut voxel_core::Progress::none(),
+            )
         };
 
         // MASK + fully transparent → every voxel is cut.
@@ -567,7 +754,15 @@ mod tests {
             material: 1,
         }];
         assert_eq!(
-            cull_mask_cutout(&voxels, &mesh, &grid, 0.0, None).len(),
+            cull_mask_cutout(
+                &voxels,
+                &mesh,
+                &grid,
+                0.0,
+                None,
+                &mut voxel_core::Progress::none()
+            )
+            .len(),
             1,
             "no appearance/packed → nothing cut"
         );

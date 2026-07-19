@@ -9,6 +9,7 @@ use crate::core::VoxelizeOpts;
 use crate::error::VoxelizeGpuError;
 
 mod buffers;
+pub mod colorbake;
 mod compact_attrs;
 mod compact_positions;
 mod compact_voxels;

@@ -65,17 +65,23 @@ mod pod {
 }
 use pod::GenParams;
 
-/// Maps a `MAP_READ` buffer, blocks until ready, and copies its bytes out.
-fn read_buffer(device: &wgpu::Device, buf: &wgpu::Buffer) -> Result<Vec<u8>, GpuError> {
+/// Maps a `MAP_READ` buffer, awaits readiness, and copies its bytes out.
+/// Native: a blocking poll drives the device so the await resolves at once.
+/// `wasm32`: blocking is impossible — awaiting yields to the browser event
+/// loop, which drives the device and fires the map callback.
+async fn read_buffer(device: &wgpu::Device, buf: &wgpu::Buffer) -> Result<Vec<u8>, GpuError> {
     let slice = buf.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = futures_channel::oneshot::channel();
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
+    #[cfg(not(target_arch = "wasm32"))]
     device
         .poll(wgpu::PollType::wait_indefinitely())
         .map_err(|_| GpuError::Poll)?;
-    rx.recv().map_err(|_| GpuError::Poll)??;
+    #[cfg(target_arch = "wasm32")]
+    let _ = device; // the browser event loop drives the device
+    rx.await.map_err(|_| GpuError::Poll)??;
     let data = slice.get_mapped_range();
     let bytes = data.to_vec();
     drop(data);
@@ -94,9 +100,20 @@ fn read_buffer(device: &wgpu::Device, buf: &wgpu::Buffer) -> Result<Vec<u8>, Gpu
 ///   leaf buffer exceeds a GPU limit (everything through `2048³` is supported);
 ///   the caller falls back to the CPU build.
 /// - [`GpuError::Poll`] / [`GpuError::BufferMap`] on a device/readback failure.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn generate_noise_tree(ctx: &GpuContext, field: &NoiseField) -> Result<SparseTree, GpuError> {
+    pollster::block_on(generate_noise_tree_async(ctx, field))
+}
+
+/// [`generate_noise_tree`]'s async core — the only form callable on `wasm32`,
+/// where the readbacks must yield to the browser event loop (stage 5: noise
+/// fixtures in the web IO worker).
 #[allow(clippy::cast_possible_truncation)] // counts are bounded < u32::MAX by the guards
 #[allow(clippy::too_many_lines)] // one-shot GPU setup: pipeline + buffers + 2 dispatches + readback
-pub fn generate_noise_tree(ctx: &GpuContext, field: &NoiseField) -> Result<SparseTree, GpuError> {
+pub async fn generate_noise_tree_async(
+    ctx: &GpuContext,
+    field: &NoiseField,
+) -> Result<SparseTree, GpuError> {
     let res = field.resolution;
     let n = res.voxels_per_axis();
     let bpa = n / 8; // bricks per axis
@@ -224,7 +241,7 @@ pub fn generate_noise_tree(ctx: &GpuContext, field: &NoiseField) -> Result<Spars
     encoder.copy_buffer_to_buffer(&counter_buf, 0, &counter_rb, 0, 4);
     queue.submit(Some(encoder.finish()));
 
-    let count_bytes = read_buffer(device, &counter_rb)?;
+    let count_bytes = read_buffer(device, &counter_rb).await?;
     let count = u32::from_le_bytes(count_bytes[0..4].try_into().expect("4 bytes"));
     if count == 0 {
         return Ok(SparseTree::from_bricks(res, Vec::new()));
@@ -250,8 +267,8 @@ pub fn generate_noise_tree(ctx: &GpuContext, field: &NoiseField) -> Result<Spars
     encoder.copy_buffer_to_buffer(&leaves_buf, 0, &leaves_rb, 0, u64::from(count) * 64);
     queue.submit(Some(encoder.finish()));
 
-    let coord_data = read_buffer(device, &coords_rb)?;
-    let leaf_data = read_buffer(device, &leaves_rb)?;
+    let coord_data = read_buffer(device, &coords_rb).await?;
+    let leaf_data = read_buffer(device, &leaves_rb).await?;
     let coords: &[u32] = bytemuck::cast_slice(&coord_data);
     let leaf_words: &[u32] = bytemuck::cast_slice(&leaf_data);
 

@@ -15,3 +15,7 @@ pub(crate) const COMPACT_VOXELS_WGSL: &str = include_str!("../../shaders/compact
 
 /// Sparse-brick → compacted-attribute compaction pass.
 pub(crate) const COMPACT_ATTRS_WGSL: &str = include_str!("../../shaders/compact_attrs.wgsl");
+
+/// The GPU colour bake — a transcription of `gpu/colorbake.rs::reference_bake`
+/// (see that module's docs; the differential tests pin the parity).
+pub(crate) const COLORBAKE_WGSL: &str = include_str!("../../shaders/colorbake.wgsl");

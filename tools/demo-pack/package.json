@@ -1,0 +1,20 @@
+{
+  "name": "demo-pack",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Standalone pack tool for the curated portfolio demo set: gltf-transform recipe that turns demo-assets/src/*.glb into loader-envelope-safe, texture-resized, gzipped outputs the web shell ships. Deliberately separate from the web shell and the voxel crates (docs/design/demo-assets.md).",
+  "bin": {
+    "demo-pack": "./pack.mjs"
+  },
+  "scripts": {
+    "inspect": "node pack.mjs --inspect",
+    "pack": "node pack.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.4.1",
+    "@gltf-transform/extensions": "^4.4.1",
+    "@gltf-transform/functions": "^4.4.1",
+    "sharp": "^0.33.5"
+  }
+}

@@ -15,6 +15,25 @@ pub(crate) fn shader_source(entry: &str) -> String {
     format!("{}\n{}", include_str!("../shaders/traversal.wgsl"), entry)
 }
 
+/// The shared hover-cursor snippet (uniform @9 + `cursor_tint`), concatenated
+/// into every **render** entry (never the compute-traverse kernels, whose
+/// layouts carry no binding 9) so the ring shades identically on all paths.
+pub(crate) const CURSOR_WGSL: &str = include_str!("../shaders/cursor.wgsl");
+
+/// The themed-sky snippet (uniform @10 + `sky_color`), render entries only.
+pub(crate) const SKY_WGSL: &str = include_str!("../shaders/sky.wgsl");
+
+/// [`shader_source`] plus the cursor snippet — the render-path builder.
+pub(crate) fn render_shader_source(entry: &str) -> String {
+    format!(
+        "{}\n{}\n{}\n{}",
+        include_str!("../shaders/traversal.wgsl"),
+        CURSOR_WGSL,
+        SKY_WGSL,
+        entry
+    )
+}
+
 /// Uploads the node, leaf, and per-leaf-bounds buffers (each padded to be
 /// non-zero-sized so the `k = 0` / empty cases are valid). Returns
 /// `(nodes, leaves, leaf_bounds)`.
@@ -197,8 +216,10 @@ pub(crate) const MAX_BLEND: u32 = 8;
 /// here (rather than declaring it in the `.wgsl`) keeps CPU and WGSL in lockstep.
 pub(crate) fn color_shader_source(per_chunk: u32) -> String {
     format!(
-        "const PER_CHUNK: u32 = {per_chunk}u;\n{}\n{}",
+        "const PER_CHUNK: u32 = {per_chunk}u;\n{}\n{}\n{}\n{}",
         include_str!("../shaders/traversal.wgsl"),
+        CURSOR_WGSL,
+        SKY_WGSL,
         include_str!("../shaders/render_truecolor.wgsl"),
     )
 }
@@ -208,9 +229,14 @@ pub(crate) fn color_shader_source(per_chunk: u32) -> String {
 /// 7 bindings as [`color_shader_source`]; selected only when the scene has
 /// transparent leaves.
 pub(crate) fn color_blend_shader_source(per_chunk: u32, max_blend: u32) -> String {
+    // The cursor snippet is concatenated for a uniform binding interface, but
+    // the blend compositor does not draw the ring (no single hit voxel to
+    // band against) — a documented Stage-D limitation on transparent scenes.
     format!(
-        "const PER_CHUNK: u32 = {per_chunk}u;\nconst MAX_BLEND: u32 = {max_blend}u;\n{}\n{}",
+        "const PER_CHUNK: u32 = {per_chunk}u;\nconst MAX_BLEND: u32 = {max_blend}u;\n{}\n{}\n{}\n{}",
         include_str!("../shaders/traversal.wgsl"),
+        CURSOR_WGSL,
+        SKY_WGSL,
         include_str!("../shaders/render_truecolor_blend.wgsl"),
     )
 }
@@ -303,6 +329,49 @@ pub(crate) fn upload_color_chunks(
         usage: wgpu::BufferUsages::STORAGE,
     });
     (chunks, base, dummy)
+}
+
+/// Uploads the **editable paged** truecolor buffers (brush-editing Stage A2):
+/// the flat colour pool `pool_image` split into `ceil(len / per_chunk)` chunk
+/// buffers, the per-leaf `page_words` page table, and one shared dummy for the
+/// unused chunk slots. Unlike [`upload_color_chunks`] (build-once, `STORAGE`
+/// only) the chunks and page table are `STORAGE | COPY_DST` so an edit can patch
+/// a single page and the topology path can rewrite the page table in place.
+/// Chunk buffers are sized to the used portion (the last chunk partial);
+/// [`crate::GpuRenderer`] grows one to a full `per_chunk` on demand when an edit
+/// writes past its end. The caller must have run [`probe_truecolor`] with
+/// `len = pool_image.len()`.
+pub(crate) fn upload_color_pool(
+    device: &wgpu::Device,
+    pool_image: &[u32],
+    page_words: &[u32],
+    per_chunk: u32,
+) -> (Vec<wgpu::Buffer>, wgpu::Buffer, wgpu::Buffer) {
+    let chunks: Vec<wgpu::Buffer> = pool_image
+        .chunks(per_chunk as usize)
+        .enumerate()
+        .map(|(i, slice)| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("leaf_color_pool_{i}")),
+                contents: bytemuck::cast_slice(slice),
+                // COPY_SRC too: a later grow copies this chunk's contents forward.
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+            })
+        })
+        .collect();
+    let page_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("leaf_color_page"),
+        contents: bytemuck::cast_slice(page_words),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    });
+    let dummy = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("leaf_color_dummy"),
+        contents: bytemuck::cast_slice(&[0u32]),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    (chunks, page_buf, dummy)
 }
 
 #[cfg(test)]

@@ -1,0 +1,45 @@
+{
+  // Engineering Codex Reference TSConfig, browser/DOM variant: full strictness
+  // profile kept; module/emit adjusted because Vite (esbuild) emits and this
+  // config is the type gate (`tsc --noEmit` runs before every build).
+  "compilerOptions": {
+    /* --- Type-checking strictness --- */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
+
+    /* --- Emit safety (type gate only; Vite owns emit) --- */
+    "noEmit": true,
+    "skipLibCheck": false,
+    "forceConsistentCasingInFileNames": true,
+
+    /* --- Language target --- */
+    "target": "ES2022",
+    // ESNext.Disposable: the wasm-bindgen .d.ts declares `[Symbol.dispose]` on
+    // every exported class.
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "ESNext.Disposable"],
+    "useDefineForClassFields": true,
+
+    /* --- Module behavior (bundler-emit project) --- */
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    /* --- Ambient types: Vite's `?url` asset modules --- */
+    "types": ["vite/client"]
+  },
+  // App source only: vite.config.ts runs in Node (Vite type-checks it when
+  // loading) and vitest's declarations need Node ambient types — both would
+  // break this browser project under skipLibCheck: false. Tests are checked by
+  // tsconfig.test.json.
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts"]
+}

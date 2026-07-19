@@ -26,9 +26,7 @@
     clippy::cast_sign_loss
 )]
 
-mod camera;
 mod hud;
-mod input;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -56,9 +54,8 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use camera::{FlyCamera, orbit_camera, orbit_eye_forward};
 use hud::{Hud, HudBuilder};
-use input::Input;
+use voxel_camera::{FlyCamera, Input, OrbitFrame, orbit_camera, orbit_eye_forward};
 
 #[derive(Parser, Clone)]
 #[command(
@@ -301,6 +298,10 @@ struct Viewer {
     needs_full_upload: bool,
     // Camera state.
     mode: CamMode,
+    /// The turntable's target — the loaded scene's occupied bounding box (or
+    /// the whole grid when empty). Computed once at load: the orbit frames the
+    /// object, not the grid it sits in.
+    orbit_frame: OrbitFrame,
     fly: FlyCamera,
     input: Input,
     mouse_look: bool,
@@ -436,9 +437,11 @@ impl Viewer {
         let hud = Hud::new(&ctx.device, &ctx.queue, format);
 
         let n = resolution.voxels_per_axis() as f32;
-        let (eye, fwd) = orbit_eye_forward(0.0, n);
+        let orbit_frame = OrbitFrame::for_bbox(tree.occupied_bbox(), n);
+        let (eye, fwd) = orbit_eye_forward(0.0, orbit_frame);
         let last_camera = orbit_camera(
             0.0,
+            orbit_frame,
             n,
             config.width,
             config.height,
@@ -473,6 +476,7 @@ impl Viewer {
             last_edit: None,
             needs_full_upload: false,
             mode: CamMode::Orbit,
+            orbit_frame,
             fly: FlyCamera::from_eye_forward(eye, fwd, n),
             input: Input::default(),
             mouse_look: false,
@@ -508,7 +512,7 @@ impl Viewer {
         let n = self.resolution.voxels_per_axis() as f32;
         let k = self.resolution.internal_levels();
         self.last_camera = match self.mode {
-            CamMode::Orbit => orbit_camera(self.angle, n, width, height, k),
+            CamMode::Orbit => orbit_camera(self.angle, self.orbit_frame, n, width, height, k),
             CamMode::Free => self.fly.to_gpu(width, height, n, k),
         };
     }
@@ -518,7 +522,7 @@ impl Viewer {
     fn ensure_free(&mut self) {
         if self.mode == CamMode::Orbit {
             let n = self.resolution.voxels_per_axis() as f32;
-            let (eye, fwd) = orbit_eye_forward(self.angle, n);
+            let (eye, fwd) = orbit_eye_forward(self.angle, self.orbit_frame);
             self.fly = FlyCamera::from_eye_forward(eye, fwd, n);
             self.mode = CamMode::Free;
         }
@@ -656,6 +660,7 @@ impl Viewer {
                 // Occupancy edits only here; material edits come via set_material
                 // and a material patch once the leaf_mat buffer lands (milestone 5).
                 Edit::Material { .. } => unreachable!("set_voxel never returns Material"),
+                Edit::Color { .. } => unreachable!("set_voxel never returns Color"),
             }
         }
 
@@ -728,7 +733,7 @@ impl Viewer {
                 // Fixed per-frame increment keeps scripted --frames runs
                 // reproducible regardless of frame rate.
                 self.angle += 0.01;
-                orbit_camera(self.angle, n, w, h, k)
+                orbit_camera(self.angle, self.orbit_frame, n, w, h, k)
             }
             CamMode::Free => {
                 self.fly.apply(dt, &self.input);
@@ -991,7 +996,8 @@ fn build_from_mesh(
     } else {
         voxels
     };
-    let (tree, dropped) = voxelizer::tree_from_compact(resolution, &voxels);
+    let (tree, dropped) =
+        voxelizer::tree_from_compact(resolution, &voxels, &mut voxelizer::Progress::none());
     if dropped > 0 {
         eprintln!("  {dropped} voxels fell outside the fitted grid (dropped)");
     }
@@ -1027,7 +1033,14 @@ fn apply_mask_cutout(
     epsilon: f32,
     packed: &[u32],
 ) -> Vec<CompactVoxel> {
-    let kept = voxelizer::cull_mask_cutout(voxels, mesh, grid, epsilon, Some(packed));
+    let kept = voxelizer::cull_mask_cutout(
+        voxels,
+        mesh,
+        grid,
+        epsilon,
+        Some(packed),
+        &mut voxelizer::Progress::none(),
+    );
     let dropped = voxels.len() - kept.len();
     if dropped > 0 {
         eprintln!("  alpha-cutout dropped {dropped} MASK voxels");
@@ -1068,7 +1081,15 @@ fn bake_truecolor_if_textured(
     // `packed` constrains the colour owner to each voxel's own material so the
     // bake can't sample a neighbouring surface's texture (the wrong-side bleed);
     // it's the same per-triangle material stream the compaction used.
-    voxelizer::bake_leaf_colors(structure, tree, mesh, grid, epsilon, Some(packed));
+    voxelizer::bake_leaf_colors(
+        structure,
+        tree,
+        mesh,
+        grid,
+        epsilon,
+        Some(packed),
+        &mut voxelizer::Progress::none(),
+    );
     eprintln!(
         "  truecolor baked: {} voxel colours in {:.1}s",
         structure.leaf_color_words().len(),

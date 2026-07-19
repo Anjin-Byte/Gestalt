@@ -1,0 +1,24 @@
+[package]
+name = "voxel-brush"
+description = "Pure brush kernels for the sculpt/paint system (docs/design/brush-editing): fields in, voxel operations out. Deterministic, no GPU, no tree mutation, no RNG; the effectful stroke controller lives in voxel-web."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+# Application workspace, not a published library — never goes to crates.io. Also
+# lets the supply-chain gate (`cargo xtask ci-deps`) accept the internal path deps.
+publish = false
+
+[dependencies]
+voxel-core = { workspace = true }
+glam = { workspace = true }
+
+# The tool/falloff enums cross the wasm boundary as C-like enums (the
+# CameraMode/KeyAction precedent); natively they are plain enums and this dep
+# does not exist. Version matches voxel-web's (the cdylib that links the glue).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+[lints]
+workspace = true

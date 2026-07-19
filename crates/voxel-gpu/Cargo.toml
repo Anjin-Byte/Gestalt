@@ -17,6 +17,9 @@ bytemuck = { workspace = true }
 thiserror = { workspace = true }
 pollster = { workspace = true }
 glam = { workspace = true }
+# Oneshot future for the noise generator's readbacks (generate.rs) — awaitable
+# on wasm32, driven by a blocking poll natively.
+futures-channel = { workspace = true }
 
 # Programmatic GPU-trace capture (write a .gputrace for Xcode) — macOS only.
 # Pinned to the versions wgpu's Metal backend already pulls in, so no duplicate;

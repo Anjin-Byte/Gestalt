@@ -49,7 +49,19 @@ pub use crate::core::{
     VoxelOccupancy, VoxelizationOutput, VoxelizeOpts,
 };
 pub use crate::error::{VoxelizeGpuError, VoxelizerError};
+pub use crate::gpu::colorbake::{PackedBakeInputs, pack_bake_inputs, reference_bake};
 pub use crate::gpu::{GpuVoxelizer, GpuVoxelizerConfig};
+#[cfg(feature = "cvox")]
+pub use crate::io::export::write_cvox_voxels;
+#[cfg(feature = "vox")]
+pub use crate::io::export::{VOX_MAX_EXTENT, write_vox_voxels};
+#[cfg(feature = "cvox")]
+pub use crate::io::import::CvoxModel;
+pub use crate::io::import::VoxModel;
+#[cfg(feature = "cvox")]
+pub use crate::io::import::load_cvox_slice;
+#[cfg(feature = "vox")]
+pub use crate::io::import::load_vox_slice;
 #[cfg(feature = "gltf")]
 pub use crate::io::{load_gltf_path, load_gltf_slice};
 #[cfg(any(feature = "gltf", feature = "obj", feature = "stl"))]
@@ -64,5 +76,6 @@ pub use crate::truecolor::{bake_leaf_colors, cull_mask_cutout};
 // The `voxel-core` types that appear in this crate's public API, re-exported so
 // callers (and the renderer bridge) need not depend on `voxel-core` directly.
 pub use voxel_core::{
-    MaterialTable, OccupancyField, Resolution, SchoolBBuffer, SparseTree, VoxelCoord,
+    MaterialTable, Meter, OccupancyField, Progress, Resolution, SchoolBBuffer, SparseTree,
+    VoxelCoord,
 };

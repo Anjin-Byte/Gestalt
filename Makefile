@@ -85,6 +85,32 @@ diff: ## GPU-vs-f64-reference hit differential (RAYS)
 edit: ## edit-performance suite; add SWEEP=1 for the fixture×res table
 	$(CLI) edit --fixture $(FIXTURE) --res $(RES) $(if $(SWEEP),--sweep,)
 
+## --- web front end (docs/design/web-frontend-api.md) ---
+
+.PHONY: web-pkg
+web-pkg: ## build the wasm kernel package (crates/voxel-web → pkg/, dev profile)
+	wasm-pack build crates/voxel-web --dev --target web
+
+.PHONY: demos
+demos: ## pack the curated portfolio demo set (demo-assets/src → web/src/assets/demos, incremental)
+	cd tools/demo-pack && { [ -d node_modules ] || npm install; } && node pack.mjs
+
+.PHONY: web-setup
+web-setup: web-pkg demos ## one-time shell setup: wasm pkg + demo pack + npm install
+	cd web && npm install
+
+.PHONY: web
+web: web-pkg demos ## build the kernel, pack demos, then serve the shell at localhost:5173
+	cd web && npm run dev
+
+.PHONY: web-check
+web-check: ## shell quality gate: tsc --noEmit + typed eslint + vitest
+	cd web && npm run typecheck && npm run lint && npm run test
+
+.PHONY: web-dist
+web-dist: web-pkg demos ## production shell build into web/dist (demos + tsc gate + vite)
+	cd web && npm run build
+
 ## --- GPU profiling (see CAPTURE.md) ---
 
 .PHONY: capture

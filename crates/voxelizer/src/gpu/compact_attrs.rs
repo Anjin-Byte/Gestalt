@@ -7,15 +7,9 @@ use crate::error::VoxelizeGpuError;
 
 impl GpuVoxelizer {
     /// Compacts sparse voxel data into indices, owner IDs, and colors.
-    // Stays `async` to preserve the public GPU-orchestration API contract
-    // (callers `.await` it); the readback path is now synchronous.
     // Many arguments: this is a GPU dispatch entry binding several input buffers.
     // Return triple `(indices, owners, colors)` is the natural compaction result.
-    #[allow(
-        clippy::unused_async,
-        clippy::too_many_arguments,
-        clippy::type_complexity
-    )]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub async fn compact_sparse_attributes(
         &self,
         occupancy: &[u32],
@@ -54,13 +48,15 @@ impl GpuVoxelizer {
             max_entries,
         );
 
-        let count = self.dispatch_compact_attrs(&buffers, brick_count, max_entries)?;
+        let count = self
+            .dispatch_compact_attrs(&buffers, brick_count, max_entries)
+            .await?;
 
         if count == 0 {
             return Ok((Vec::new(), Vec::new(), Vec::new()));
         }
 
-        let (indices, owners, colors) = self.readback_attrs(&buffers, count, max_entries)?;
+        let (indices, owners, colors) = self.readback_attrs(&buffers, count, max_entries).await?;
         Ok((indices, owners, colors))
     }
 }
@@ -251,7 +247,7 @@ impl GpuVoxelizer {
 // === Dispatch ===
 
 impl GpuVoxelizer {
-    fn dispatch_compact_attrs(
+    async fn dispatch_compact_attrs(
         &self,
         buffers: &CompactAttrsBuffers,
         brick_count: u32,
@@ -327,7 +323,7 @@ impl GpuVoxelizer {
         self.queue.submit([encoder.finish()]);
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
-        let counter = map_buffer_u32(&read_counter, &self.device)?;
+        let counter = map_buffer_u32(&read_counter, &self.device).await?;
         Ok(counter.first().copied().unwrap_or(0).min(max_entries))
     }
 }
@@ -337,7 +333,7 @@ impl GpuVoxelizer {
 impl GpuVoxelizer {
     // Return triple `(indices, owners, colors)` mirrors the public entry point.
     #[allow(clippy::type_complexity)]
-    fn readback_attrs(
+    async fn readback_attrs(
         &self,
         buffers: &CompactAttrsBuffers,
         count: u32,
@@ -375,9 +371,9 @@ impl GpuVoxelizer {
         self.queue.submit([encoder.finish()]);
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
-        let indices = map_buffer_u32(&read_indices, &self.device)?;
-        let owners = map_buffer_u32(&read_owner, &self.device)?;
-        let colors = map_buffer_u32(&read_color, &self.device)?;
+        let indices = map_buffer_u32(&read_indices, &self.device).await?;
+        let owners = map_buffer_u32(&read_owner, &self.device).await?;
+        let colors = map_buffer_u32(&read_color, &self.device).await?;
 
         let count = count as usize;
         Ok((

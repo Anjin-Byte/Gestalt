@@ -25,9 +25,15 @@ struct Camera {
 @group(0) @binding(3) var<uniform> camera: Camera;
 @group(0) @binding(4) var output: texture_storage_2d<rgba8unorm, write>;
 
-// Per-leaf colour base (prefix sum of count_occupied) + N_MAX=3 colour chunks.
+// Per-leaf colour *base offset* into the colour pool + N_MAX=3 colour chunks.
 // One cold read at the hit only — never on the hot occupancy probe loop.
-@group(0) @binding(5) var<storage, read> leaf_color_base: array<u32>;
+//
+// The offset is a per-leaf page base, generalized from the build-once prefix sum
+// (`count_occupied` prefix, static `GpuRenderer::new`) to an editable pool page
+// offset (`GpuRenderer::new_paged`, brush-editing Stage A2). The hit-read is
+// byte-identical either way — `pool[offset[slot] + rank(morton)]` — so this is a
+// pure rename with no logic change; only the buffer's *contents* differ.
+@group(0) @binding(5) var<storage, read> leaf_color_page: array<u32>;
 @group(0) @binding(6) var<storage, read> leaf_color_0: array<u32>;
 @group(0) @binding(7) var<storage, read> leaf_color_1: array<u32>;
 @group(0) @binding(8) var<storage, read> leaf_color_2: array<u32>;
@@ -89,11 +95,12 @@ fn render_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // One cold colour read at the hit (hit.leaf = slot, hit.vox = morton).
         // g = leaf_color_base[slot] + rank(morton); the stored u32 is sRGB RGBA8
         // (R low), unpacked verbatim into the rgba8unorm store (no re-encode).
-        let g = leaf_color_base[hit.leaf] + leaf_color_rank(hit.leaf, hit.vox);
+        let g = leaf_color_page[hit.leaf] + leaf_color_rank(hit.leaf, hit.vox);
         color = unpack4x8unorm(read_leaf_color(g));
+        // The hover-cursor ring (inactive cursor: identity — pinned).
+        color = vec4<f32>(cursor_tint(color.rgb, hit.world), color.a);
     } else {
-        let t = f32(gid.y) / h;
-        color = vec4<f32>(0.08 * (1.0 - t), 0.10 * (1.0 - t), 0.16 + 0.12 * t, 1.0);
+        color = sky_color(gid.xy, h);
     }
     textureStore(output, vec2<u32>(gid.x, gid.y), color);
 }

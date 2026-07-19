@@ -83,9 +83,10 @@ fn render_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             // Real material: RGBA8 colour from the global table (R in low byte).
             color = unpack4x8unorm(material_table[mat_id]);
         }
+        // The hover-cursor ring (inactive cursor: identity — pinned).
+        color = vec4<f32>(cursor_tint(color.rgb, hit.world), color.a);
     } else {
-        let t = f32(gid.y) / h;
-        color = vec4<f32>(0.08 * (1.0 - t), 0.10 * (1.0 - t), 0.16 + 0.12 * t, 1.0);
+        color = sky_color(gid.xy, h);
     }
     textureStore(output, vec2<u32>(gid.x, gid.y), color);
 }

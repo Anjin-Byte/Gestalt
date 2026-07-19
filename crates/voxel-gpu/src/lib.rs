@@ -23,6 +23,11 @@ pub use buffers::MAX_TRUECOLOR_VOXELS;
 pub use capture::capture_gputrace;
 pub use context::GpuContext;
 pub use error::GpuError;
+#[cfg(not(target_arch = "wasm32"))]
 pub use generate::generate_noise_tree;
-pub use render::{GpuCamera, GpuRenderer, OUTPUT_FORMAT};
+pub use generate::generate_noise_tree_async;
+pub use render::{GpuRenderer, OUTPUT_FORMAT};
+// Re-exported from the contract's home so existing `voxel_gpu::GpuCamera`
+// imports keep working after the stage-2 move.
 pub use traverse::GpuTraverser;
+pub use voxel_core::GpuCamera;

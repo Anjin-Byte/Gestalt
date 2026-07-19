@@ -25,7 +25,9 @@
 //! Later phases (`idea.md` §11) add the School-B builder, the `f32` mirror
 //! traversal, the GPU buffer contract, and the §10 measurement harness.
 
+pub mod color_pool;
 pub mod fixtures;
+pub mod gpu_camera;
 pub mod layout;
 pub mod measure;
 pub mod mip;
@@ -34,6 +36,7 @@ pub mod morton;
 pub mod node;
 pub mod oracle;
 pub mod palette;
+pub mod progress;
 pub mod school_b;
 pub mod sparse;
 
@@ -47,6 +50,7 @@ mod ray;
 mod resolution;
 
 pub use coord::VoxelCoord;
+pub use gpu_camera::GpuCamera;
 pub use layout::{Cell, NodeLayout, TraversalStats, traverse};
 pub use leaf::{LeafBounds, LeafBrick};
 pub use level::Level;
@@ -56,10 +60,11 @@ pub use node::GpuNode;
 pub use occupancy::{BitGrid, OccupancyField};
 pub use oracle::Hit;
 pub use palette::{
-    LeafMaterials, MISSING_MAGENTA, MaterialError, MaterialTable, PaletteError, bits_required,
-    pack_leaf, read_slot,
+    LEAF_VOXELS, LeafMaterials, MISSING_MAGENTA, MaterialError, MaterialTable, PaletteError,
+    bits_required, pack_leaf, read_slot,
 };
+pub use progress::{Meter, Progress};
 pub use ray::{Ray, ray_aabb};
 pub use resolution::{Resolution, ResolutionError};
 pub use school_b::SchoolBBuffer;
-pub use sparse::{Edit, SparseTree, brush_voxels};
+pub use sparse::{BrickImage, ColorPages, Edit, SparseTree, brush_voxels};

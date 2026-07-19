@@ -19,17 +19,31 @@ impl GpuContext {
     /// Probes for a GPU adapter and requests a device, or returns
     /// [`GpuError::NoAdapter`] if none is available.
     ///
+    /// Blocking wrapper over [`try_new_async`](Self::try_new_async) for native
+    /// callers. Not available on `wasm32`, where blocking the main thread is
+    /// impossible — web callers use the async form directly
+    /// (`docs/design/web-frontend-api.md` §5, stage 0).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn try_new() -> Result<Self, GpuError> {
+        pollster::block_on(Self::try_new_async())
+    }
+
+    /// Probes for a GPU adapter and requests a device, or returns
+    /// [`GpuError::NoAdapter`] if none is available.
+    ///
     /// Requests a raised `max_storage_buffer_binding_size` so larger structures
     /// fit; falls back to the adapter's reported maximum.
-    pub fn try_new() -> Result<Self, GpuError> {
+    pub async fn try_new_async() -> Result<Self, GpuError> {
         let instance = wgpu::Instance::default();
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .map_err(|_| GpuError::NoAdapter)?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .await
+            .map_err(|_| GpuError::NoAdapter)?;
 
         // Ask for as much storage-buffer headroom as the adapter allows.
         let adapter_limits = adapter.limits();
@@ -47,15 +61,16 @@ impl GpuContext {
             features |= wgpu::Features::TIMESTAMP_QUERY;
         }
 
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
                 label: Some("voxel-gpu device"),
                 required_features: features,
                 required_limits: limits,
                 memory_hints: wgpu::MemoryHints::Performance,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 trace: wgpu::Trace::Off,
-            }))?;
+            })
+            .await?;
 
         Ok(Self { device, queue })
     }

@@ -1,0 +1,18 @@
+[package]
+name = "voxel-camera"
+description = "Pure camera math + input snapshot shared by the interactive front ends (winit viewer, web engine): positions, angles, and an input state in — a GpuCamera uniform out. No windowing, no device, no clock."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+# Application workspace, not a published library — never goes to crates.io. Also
+# lets the supply-chain gate (`cargo xtask ci-deps`) accept the internal path deps.
+publish = false
+
+[dependencies]
+voxel-core = { workspace = true }
+glam = { workspace = true }
+
+[lints]
+workspace = true

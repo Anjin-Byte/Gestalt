@@ -1,0 +1,48 @@
+[package]
+name = "voxel-web"
+description = "Web front end: the WASM kernel behind the Engine boundary (docs/design/web-frontend-api.md). A cdylib consumed by the TypeScript shell via wasm-pack; owns the WebGPU device, scene, and camera — never depends on voxel-viewer (winit stays native-only)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+# Application workspace, not a published library — never goes to crates.io. Also
+# lets the supply-chain gate (`cargo xtask ci-deps`) accept the internal path deps.
+publish = false
+
+[lib]
+# cdylib is the wasm-pack artifact; rlib keeps the pure modules (camera, input,
+# scene) natively testable and clippy-checkable on the host.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+voxel-brush = { workspace = true }
+voxel-camera = { workspace = true }
+voxel-core = { workspace = true }
+voxel-gpu = { workspace = true }
+voxelizer = { workspace = true }
+wgpu = { workspace = true }
+glam = { workspace = true }
+thiserror = { workspace = true }
+
+# Web-only interop deps stay crate-local rather than hoisted into
+# workspace.dependencies (Engineering Codex: Shared Dependencies — deps with a
+# single consumer stay local), and target-gated so native builds never pull them.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+# Calling the shell's progress callback (js_sys::Function) from IoKernel jobs.
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["HtmlCanvasElement", "OffscreenCanvas"] }
+# Control-plane option structs cross via serde-wasm-bindgen only
+# (docs/design/web-frontend-api.md §4); nothing serde touches the per-frame path.
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"
+
+[dev-dependencies]
+# Drives the async mesh-import flow natively in the in-module smoke test.
+pollster = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>voxel-web — a WebGPU voxel renderer</title>
+    <meta
+      name="description"
+      content="A real-time voxel renderer that runs entirely on your GPU in the browser — import a 3D model and watch it rebuild as voxels you can orbit, sculpt, and paint."
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="view" aria-label="voxel renderer output"></canvas>
+
+    <!-- The dock composition: each surface has its own uniform icon toggle in
+         a top-corner cluster, and its panel hangs beneath its own button — the
+         popover mental model, so spatial mapping does the explaining. Left
+         corner = making (brush); right corner = managing (scene / file /
+         stats). Open panels stack in a flow column under their corner, so any
+         combination stays composed. Toggle state is in the button itself
+         (tinted while its panel is open) and persists per panel. The camera
+         pill is a persistent mode switch, not a menu — bottom-right. Status +
+         build progress are event-driven at bottom-centre, outside every
+         toggle: an error or an import's progress is never hidden. Icons are
+         inline SVG strokes (Feather, MIT) — no icon font, no network. -->
+    <div id="ui">
+      <div class="dock" id="dock-left">
+        <div class="dock-toggles">
+          <button id="toggle-edit" type="button" class="island dock-toggle"
+                  aria-controls="panel-edit" aria-expanded="true" title="brush">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Brush: tools (hotkeys 1–7), parameters, per-stroke history. -->
+        <section class="island panel" id="panel-edit" aria-label="brush">
+          <h2 class="island-label">brush</h2>
+          <!-- Tools wear their hotkey as a quiet digit badge — the palette
+               teaches itself. -->
+          <div class="controls tools" role="group" aria-label="brush tool">
+            <button id="tool-draw" type="button" class="mode active">draw<span class="key" aria-hidden="true">1</span></button>
+            <button id="tool-erase" type="button" class="mode">erase<span class="key" aria-hidden="true">2</span></button>
+            <button id="tool-clay" type="button" class="mode">clay<span class="key" aria-hidden="true">3</span></button>
+            <button id="tool-smooth" type="button" class="mode">smooth<span class="key" aria-hidden="true">4</span></button>
+            <button id="tool-flatten" type="button" class="mode">flat<span class="key" aria-hidden="true">5</span></button>
+            <button id="tool-inflate" type="button" class="mode" title="alt deflates">inflate<span class="key" aria-hidden="true">6</span></button>
+            <button id="tool-paint" type="button" class="mode" title="first paint converts a palette scene">paint<span class="key" aria-hidden="true">7</span></button>
+          </div>
+          <!-- Continuous parameters show their value (the <output> element —
+               a slider must never hide its state). -->
+          <div class="param">
+            <label for="brush-radius">radius</label>
+            <output id="radius-out" for="brush-radius">3</output>
+            <input type="range" id="brush-radius" min="1" max="12" value="3" />
+          </div>
+          <div class="param">
+            <label for="strength">strength</label>
+            <output id="strength-out" for="strength">100%</output>
+            <input type="range" id="strength" min="0" max="1" step="0.05" value="1" />
+          </div>
+          <!-- Four mutually-exclusive curves on a tool surface: a segmented
+               control, everything visible at a glance (a select hides them). -->
+          <div class="controls falloffs" role="group" aria-label="falloff">
+            <button id="falloff-smooth" type="button" class="mode active">smooth</button>
+            <button id="falloff-linear" type="button" class="mode">linear</button>
+            <button id="falloff-sphere" type="button" class="mode">sphere</button>
+            <button id="falloff-sharp" type="button" class="mode">sharp</button>
+          </div>
+          <label class="row swatch-row">
+            <span>color</span>
+            <input type="color" id="brush-color" value="#ffffff" />
+          </label>
+          <!-- Depth rides the stats cadence; buttons disable at zero and show
+               the count so finite history is honest. Cmd+Z / Shift+Cmd+Z. -->
+          <div class="controls history" role="group" aria-label="stroke history">
+            <button id="undo" type="button" class="mode" disabled>undo</button>
+            <button id="redo" type="button" class="mode" disabled>redo</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- Toggle order: content panels in workflow order (scene, file,
+           stats), then app chrome (theme, settings) clustered at the corner —
+           the menu-bar convention: system controls live at the extreme edge,
+           content controls inward. The brush toggle anchors the left corner
+           alone: the making side. -->
+      <div class="dock" id="dock-right">
+        <div class="dock-toggles">
+          <button id="toggle-scene" type="button" class="island dock-toggle"
+                  aria-controls="panel-scene" aria-expanded="true" title="scene">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+          </button>
+          <button id="toggle-io" type="button" class="island dock-toggle"
+                  aria-controls="panel-io" aria-expanded="false" title="file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+          </button>
+          <button id="toggle-stats" type="button" class="island dock-toggle"
+                  aria-controls="panel-stats" aria-expanded="false" title="stats">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+          </button>
+          <!-- Theme override (persisted): follows the OS until clicked; the
+               icon shows the mode you would switch to. -->
+          <button id="theme-toggle" type="button" class="island dock-toggle" title="theme">
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="5" />
+              <line x1="12" y1="1" x2="12" y2="3" />
+              <line x1="12" y1="21" x2="12" y2="23" />
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+              <line x1="1" y1="12" x2="3" y2="12" />
+              <line x1="21" y1="12" x2="23" y2="12" />
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+            </svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+          <button id="toggle-settings" type="button" class="island dock-toggle"
+                  aria-controls="panel-settings" aria-expanded="false" title="settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" />
+              <line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" />
+              <line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" />
+              <line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" />
+              <line x1="17" y1="16" x2="23" y2="16" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Scene: what is on the grid and how it was derived. -->
+        <section class="island panel" id="panel-scene" aria-label="scene">
+          <h2 class="island-label">scene</h2>
+          <!-- The curated demo gallery is how models enter the scene. The debug
+               fixtures that used to live here are crate-development artifacts and
+               are no longer exposed; a single procedural still boots as an
+               instant, no-network backdrop. This button re-opens the gallery
+               (which also opens on load). -->
+          <button id="browse-demos" type="button" class="io-primary">browse models…</button>
+          <!-- A settings list: label left, control right, hairline dividers —
+               the inspector idiom (rows, not a form grid). -->
+          <div class="rows">
+            <div class="row scene-current">
+              <span>current</span>
+              <span id="scene-name" class="scene-name" title="current scene">backdrop</span>
+            </div>
+            <label class="row">
+              <span>res</span>
+              <!-- Legal sizes are 8·4^k. Applies when resampling a loaded model
+                   (disabled on the fixed backdrop / discrete .vox·.cvox). -->
+              <select id="res">
+                <option value="128" selected>128³</option>
+                <option value="512">512³</option>
+                <option value="2048">2048³</option>
+              </select>
+            </label>
+            <label class="row check">
+              <span>truecolor</span>
+              <input type="checkbox" id="truecolor" checked />
+            </label>
+            <label class="row check" title="rotate −90° about X for Z-up OBJ/STL exports">
+              <span>Z-up fix</span>
+              <input type="checkbox" id="zup" />
+            </label>
+            <label class="row check" title="bake voxel colours on the GPU (uncheck to A/B against the CPU oracle)">
+              <span>gpu bake</span>
+              <input type="checkbox" id="gpu-bake" checked />
+            </label>
+          </div>
+          <!-- Re-sampling a mesh is expensive, so parameter changes stage
+               rather than rebuild per keystroke. The button is a permanent
+               resident: gray while there is nothing to commit, accent-armed
+               when a mesh import has a staged change. -->
+          <button id="revoxelize" type="button" disabled>re-voxelize</button>
+        </section>
+
+        <!-- IO: terminal actions. -->
+        <section class="island panel" id="panel-io" aria-label="file" hidden>
+          <h2 class="island-label">file</h2>
+          <!-- One primary verb, three parallel exports — the hierarchy the
+               four-equal-buttons grid was hiding. -->
+          <button id="import" type="button" class="io-primary">import…</button>
+          <div class="export-group">
+            <span class="micro-label">export</span>
+            <div class="export-row">
+              <button id="export" type="button">png</button>
+              <button id="export-vox" type="button">vox</button>
+              <button id="export-cvox" type="button">cvox</button>
+            </div>
+          </div>
+          <input type="file" id="file" accept=".glb,.gltf,.obj,.stl,.vox,.cvox" hidden />
+        </section>
+
+        <!-- Settings: the accent palette (each swatch swaps the four accent
+             seed tones; every consumer re-derives). Coral is deliberately
+             absent — it sits on the danger hue. -->
+        <section class="island panel" id="panel-settings" aria-label="settings" hidden>
+          <h2 class="island-label">settings</h2>
+          <div class="row">
+            <span>accent</span>
+            <div class="swatches" role="group" aria-label="accent colour">
+              <button id="accent-amber" type="button" class="swatch-btn" title="amber"
+                      aria-pressed="true" style="background: oklch(87% 0.105 85)"></button>
+              <button id="accent-teal" type="button" class="swatch-btn" title="teal"
+                      aria-pressed="false" style="background: oklch(85% 0.1 195)"></button>
+              <button id="accent-orchid" type="button" class="swatch-btn" title="orchid"
+                      aria-pressed="false" style="background: oklch(83% 0.11 340)"></button>
+              <button id="accent-mint" type="button" class="swatch-btn" title="mint"
+                      aria-pressed="false" style="background: oklch(86% 0.1 160)"></button>
+              <button id="accent-violet" type="button" class="swatch-btn" title="violet"
+                      aria-pressed="false" style="background: oklch(84% 0.1 295)"></button>
+            </div>
+          </div>
+          <!-- The controls sheet: one row per action, keycaps right-aligned —
+               a shortcut is looked up by what you want to do, so the action
+               leads and the keys follow. -->
+          <div class="shortcuts" aria-label="controls">
+            <h3 class="shortcut-group">camera</h3>
+            <div class="shortcut"><span>orbit · look</span><span class="keys"><kbd>drag</kbd></span></div>
+            <div class="shortcut"><span>move pivot</span><span class="keys"><kbd>⌥</kbd><kbd>drag</kbd></span></div>
+            <div class="shortcut"><span>recentre pivot</span><span class="keys"><kbd>2×click</kbd></span></div>
+            <div class="shortcut"><span>zoom · fly speed</span><span class="keys"><kbd>wheel</kbd></span></div>
+            <div class="shortcut"><span>fly move</span><span class="keys"><kbd>WASD</kbd><kbd>QE</kbd></span></div>
+            <h3 class="shortcut-group">sculpt</h3>
+            <div class="shortcut"><span>sculpt · paint</span><span class="keys"><kbd>right-drag</kbd></span></div>
+            <div class="shortcut"><span>tools</span><span class="keys"><kbd>1</kbd>–<kbd>7</kbd></span></div>
+            <div class="shortcut"><span>brush size</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>
+            <div class="shortcut"><span>deflate (hold)</span><span class="keys"><kbd>⌥</kbd></span></div>
+            <div class="shortcut"><span>undo · redo</span><span class="keys"><kbd>⌘Z</kbd><kbd>⇧⌘Z</kbd></span></div>
+            <h3 class="shortcut-group">files</h3>
+            <div class="shortcut"><span>import</span><span class="keys">drop <kbd>.glb</kbd><kbd>.vox</kbd><kbd>.cvox</kbd></span></div>
+          </div>
+        </section>
+
+        <!-- The quiet readout: live counters only (the controls sheet lives
+             in settings — reference material sits with app chrome). -->
+        <section class="island panel" id="panel-stats" aria-label="stats" hidden>
+          <!-- Three bands, not eight rows: the glance number (fps) leads at
+               full size with the frame-time envelope beside it; the scene's
+               shape is a cell band (value over label); the wasm heaps (render /
+               IO worker — high-water gauges, wasm memory never shrinks) and
+               the session frame counter are the quiet footnote. -->
+          <div class="stat-hero">
+            <div class="stat-big"><span id="stat-fps">—</span><span class="stat-unit">fps</span></div>
+            <div class="stat-frame" id="stat-frame">—</div>
+          </div>
+          <div class="stat-cells">
+            <div class="stat-cell"><span id="stat-voxels">—</span><small>voxels</small></div>
+            <div class="stat-cell"><span id="stat-leaves">—</span><small>leaves</small></div>
+            <div class="stat-cell"><span id="stat-nodes">—</span><small>nodes</small></div>
+            <div class="stat-cell"><span id="stat-res">—</span><small>res</small></div>
+          </div>
+          <div class="stat-foot">
+            <span class="stat-foot-item"><small>heap</small><span id="stat-heap">—</span></span>
+            <span class="stat-foot-item"><small>frames</small><span id="stat-frames">—</span></span>
+          </div>
+        </section>
+      </div>
+
+      <!-- Camera: a persistent mode switch (not a menu) — bottom-right.
+           orbit = the hybrid turntable: spins on its own until grabbed, drag
+           flings with momentum, alt-drag pans the pivot, double-click
+           recentres (wheel zooms); fly = WASD freecam (wheel = speed).
+           Right-drag sculpts in every mode. -->
+      <nav class="island camera-dock" id="camera-dock" role="group" aria-label="camera mode">
+        <button id="cam-orbit" type="button" class="mode active">orbit</button>
+        <button id="cam-fly" type="button" class="mode">fly</button>
+      </nav>
+    </div>
+
+    <!-- Bottom-centre, outside every toggle: status fades in with a message
+         and out when it clears (errors persist); the build bar keeps its own
+         show/finish lifecycle. -->
+    <div id="bottom-status">
+      <p id="status" role="status"></p>
+      <div id="build-bar" class="build-bar" role="progressbar" hidden></div>
+    </div>
+
+    <!-- The demo gallery: a launcher over the live backdrop. Opens on load and
+         from the scene panel's "browse models" button. Cards are populated at
+         boot from the packed set (src/demos.ts); picking one loads it through
+         the real voxelize path and dismisses the gallery. The empty state shows
+         when `make demos` has not packed anything. -->
+    <div id="gallery" class="gallery" hidden>
+      <div class="gallery-scrim" data-gallery-dismiss></div>
+      <div class="gallery-sheet" role="dialog" aria-modal="true" aria-labelledby="gallery-title">
+        <header class="gallery-head">
+          <h2 id="gallery-title">choose a model</h2>
+          <button id="gallery-close" type="button" class="gallery-close"
+                  title="close" aria-label="close gallery" data-gallery-dismiss>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </header>
+        <div id="gallery-grid" class="gallery-grid"></div>
+        <p id="gallery-empty" class="gallery-empty" hidden>
+          No demos packed yet — run <code>make demos</code> to build the curated set.
+        </p>
+        <footer class="gallery-foot">
+          <span>or drop a <kbd>.glb</kbd> / <kbd>.vox</kbd> / <kbd>.cvox</kbd>, or use
+            <strong>import…</strong> in the file panel</span>
+        </footer>
+      </div>
+    </div>
+
+    <div id="overlay" hidden>
+      <div class="card">
+        <h2 id="overlay-title"></h2>
+        <p id="overlay-body"></p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "$comment": "Curated portfolio demo set. One entry per demo; consumed by tools/demo-pack (the pack step) and the web shell's demos picker. Schema + per-field meaning: docs/design/demo-assets.md \u00a77. Source .glb live under demo-assets/src/ (committed); the pack step emits web/src/assets/demos/<id>.glb.gz (gitignored build output).",
+  "licenseNote": "LICENSES ARE UNVERIFIED. Every entry.license.status must read \"verified\" (with author + url + SPDX confirmed) before this set is deployed to the public portfolio site. See demo-assets/README.md.",
+  "demos": [
+    {
+      "id": "littlest_tokyo",
+      "title": "Littlest Tokyo",
+      "source": "src/littlest_tokyo.glb",
+      "thumbnail": "thumbs/littlest_tokyo.png",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "author": "Glen Fox",
+        "url": "https://sketchfab.com/3d-models/littlest-tokyo-94b24a60dc1b48248de50bf087c0f042",
+        "status": "unverified",
+        "attribution": "\"Littlest Tokyo\" by Glen Fox, CC-BY-4.0"
+      },
+      "res": 512,
+      "textureMax": 1024,
+      "textureQuality": 80,
+      "zUp": false,
+      "truecolor": true,
+      "gpuBake": true,
+      "alphaMode": "mask",
+      "geometryProfile": "textured",
+      "expectedVoxels": null,
+      "notes": "Hero diorama; default demo. Has MASK cutout foliage and some BLEND materials \u2014 packed with a PNG base colour to keep alpha. BLEND is treated as MASK by the current voxelizer (transparency BLEND path not yet implemented). One 4096\u00b2 texture is the size driver; textureMax caps it to the bake-resolvable 1024."
+    },
+    {
+      "id": "steampunk_camera",
+      "title": "Steampunk Camera",
+      "source": "src/steampunk_camera.glb",
+      "thumbnail": "thumbs/steampunk_camera.png",
+      "license": {
+        "spdx": null,
+        "author": null,
+        "url": null,
+        "status": "unverified",
+        "attribution": "TODO: confirm source, author, and license before public deploy"
+      },
+      "res": 512,
+      "textureMax": 1024,
+      "textureQuality": 80,
+      "zUp": false,
+      "truecolor": true,
+      "gpuBake": true,
+      "alphaMode": "opaque",
+      "geometryProfile": "textured",
+      "expectedVoxels": null,
+      "notes": "Nine 1024\u00b2 PNG textures dominate the payload \u2014 big win from JPEG re-encode."
+    },
+    {
+      "id": "venice_mask",
+      "title": "Venice Mask",
+      "source": "src/venice_mask.glb",
+      "thumbnail": "thumbs/venice_mask.png",
+      "license": {
+        "spdx": null,
+        "author": null,
+        "url": null,
+        "status": "unverified",
+        "attribution": "TODO: confirm source, author, and license before public deploy"
+      },
+      "res": 512,
+      "textureMax": 1024,
+      "textureQuality": 80,
+      "zUp": false,
+      "truecolor": true,
+      "gpuBake": true,
+      "alphaMode": "opaque",
+      "geometryProfile": "textured",
+      "expectedVoxels": null,
+      "notes": "Fifteen 1024\u00b2 PNG textures (~30 MiB of pixels) dominate \u2014 the largest source and the biggest JPEG re-encode win."
+    },
+    {
+      "id": "nemetona",
+      "title": "Nemetona",
+      "source": "src/nemetona.glb",
+      "thumbnail": "thumbs/nemetona.png",
+      "license": {
+        "spdx": null,
+        "author": null,
+        "url": null,
+        "status": "unverified",
+        "attribution": "TODO: confirm source, author, and license before public deploy"
+      },
+      "res": 512,
+      "textureMax": 1024,
+      "textureQuality": 80,
+      "zUp": false,
+      "truecolor": true,
+      "gpuBake": true,
+      "alphaMode": "opaque",
+      "geometryProfile": "dense",
+      "expectedVoxels": null,
+      "notes": "Single high-poly mesh with only three 1024\u00b2 textures \u2014 geometry, not pixels, is the payload. This is the meshopt candidate (design \u00a75 / rollout D3): the JPEG lever barely helps here."
+    },
+    {
+      "id": "bath_day",
+      "title": "Bath Day",
+      "source": "src/bath_day.glb",
+      "thumbnail": "thumbs/bath_day.png",
+      "license": {
+        "spdx": null,
+        "author": null,
+        "url": null,
+        "status": "unverified",
+        "attribution": "TODO: confirm source, author, and license before public deploy"
+      },
+      "res": 512,
+      "textureMax": 1024,
+      "textureQuality": 80,
+      "zUp": false,
+      "truecolor": true,
+      "gpuBake": true,
+      "alphaMode": "mask",
+      "geometryProfile": "textured",
+      "expectedVoxels": null,
+      "notes": "Four 2048\u00b2 PNG textures. Has MASK and BLEND materials \u2014 packed with a PNG base colour to preserve cutout alpha; BLEND treated as MASK by the current voxelizer."
+    }
+  ]
+}

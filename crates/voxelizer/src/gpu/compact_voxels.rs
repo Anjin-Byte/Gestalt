@@ -19,10 +19,8 @@ impl GpuVoxelizer {
     /// * `max_entries` — maximum output voxels (output buffer size)
     /// * `material_table` — packed u16 material IDs (two per u32 word)
     /// * `g_origin` — global voxel-space origin offset
-    // Stays `async` to preserve the public GPU-orchestration API contract
-    // (callers `.await` it); the readback path is now synchronous.
     // Many arguments: this is a GPU dispatch entry binding several input buffers.
-    #[allow(clippy::unused_async, clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn compact_sparse_voxels(
         &self,
         occupancy: &[u32],
@@ -60,13 +58,15 @@ impl GpuVoxelizer {
             g_origin,
         );
 
-        let count = self.dispatch_compact_voxels(&buffers, brick_count, max_entries)?;
+        let count = self
+            .dispatch_compact_voxels(&buffers, brick_count, max_entries)
+            .await?;
 
         if count == 0 {
             return Ok(Vec::new());
         }
 
-        let voxels = self.readback_voxels(&buffers, count, max_entries)?;
+        let voxels = self.readback_voxels(&buffers, count, max_entries).await?;
         Ok(voxels)
     }
 }
@@ -243,7 +243,7 @@ impl GpuVoxelizer {
 // === Dispatch ===
 
 impl GpuVoxelizer {
-    fn dispatch_compact_voxels(
+    async fn dispatch_compact_voxels(
         &self,
         buffers: &CompactVoxelsBuffers,
         brick_count: u32,
@@ -311,7 +311,7 @@ impl GpuVoxelizer {
         self.queue.submit([encoder.finish()]);
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
-        let counter = map_buffer_u32(&read_counter, &self.device)?;
+        let counter = map_buffer_u32(&read_counter, &self.device).await?;
         let raw = counter.first().copied().unwrap_or(0);
         // Tripwire (docs/materials/09 step 2): the shader emits one voxel per
         // occupied bit, so its count must not exceed `max_entries` (the host
@@ -330,7 +330,7 @@ impl GpuVoxelizer {
 // === Readback ===
 
 impl GpuVoxelizer {
-    fn readback_voxels(
+    async fn readback_voxels(
         &self,
         buffers: &CompactVoxelsBuffers,
         count: u32,
@@ -355,7 +355,7 @@ impl GpuVoxelizer {
         self.queue.submit([encoder.finish()]);
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
-        let raw = map_buffer_u32(&read_buf, &self.device)?;
+        let raw = map_buffer_u32(&read_buf, &self.device).await?;
         // Each CompactVoxel is 4 u32s (16 bytes)
         let all_voxels: &[CompactVoxel] = bytemuck::cast_slice(&raw);
         Ok(all_voxels[..count as usize].to_vec())

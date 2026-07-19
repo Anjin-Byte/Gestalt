@@ -3,9 +3,9 @@
 //! texture — no readback, no CPU ray-gen, no CPU shading. The viewer blits the
 //! resulting texture to its surface.
 
-use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt;
 
-use voxel_core::{MaterialTable, NodeLayout, SchoolBBuffer};
+use voxel_core::{GpuCamera, MaterialTable, NodeLayout, SchoolBBuffer};
 
 use crate::buffers;
 use crate::context::GpuContext;
@@ -13,40 +13,6 @@ use crate::error::GpuError;
 
 /// The output storage-texture format the render kernel writes.
 pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-
-// Pod upload struct. The `unsafe` here is only the `bytemuck` derive on
-// `#[repr(C)]` all-scalar data (Unsafe Quarantine); none is hand-written. Scoped
-// to this module so the rest of the file stays under `unsafe_code = deny`.
-#[allow(unsafe_code)]
-mod pod {
-    use super::{Pod, Zeroable};
-
-    /// Camera uniform, matching `render.wgsl`'s `Camera` (std140-friendly: every
-    /// `vec3` is followed by a scalar to fill its 16-byte slot).
-    #[repr(C)]
-    #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-    pub struct GpuCamera {
-        /// Camera world position.
-        pub eye: [f32; 3],
-        /// `tan(fov/2)`.
-        pub tan: f32,
-        /// Forward (unit) direction.
-        pub forward: [f32; 3],
-        /// Width / height.
-        pub aspect: f32,
-        /// Right (unit) direction.
-        pub right: [f32; 3],
-        /// Grid resolution `n` as `f32`.
-        pub n: f32,
-        /// Up (unit) direction.
-        pub up: [f32; 3],
-        /// Padding to keep the following `dims` 16-byte aligned.
-        pub pad: f32,
-        /// `[width, height, internal_levels(k), 0]`.
-        pub dims: [u32; 4],
-    }
-}
-pub use pod::GpuCamera;
 
 /// Reusable compute-pass timestamp resources (present iff the device supports
 /// `TIMESTAMP_QUERY`): a 2-slot query set and the resolve/readback buffers.
@@ -76,17 +42,35 @@ enum RenderMode {
         /// The global `global_id → colour` table; scene-static.
         table_buf: wgpu::Buffer,
     },
-    /// Per-voxel truecolor (`docs/materials/11`, P4): `leaf_color_base`@5 + N colour
-    /// chunks at 6..8 (build-once / static — edits must re-bake via [`new`]).
+    /// Per-voxel truecolor: `leaf_color_page`@5 (per-leaf base offset) + N colour
+    /// chunks at 6..8. Two provenances, same bindings and shader:
+    /// - **static** (build-once, [`new`]): `page_buf` is the prefix sum of
+    ///   `count_occupied`, chunks are `STORAGE`-only. `editable == false`; the
+    ///   paged edit methods refuse.
+    /// - **paged** (editable, [`new_paged`]): `page_buf` is the editable colour
+    ///   pool's per-leaf page offset, chunks are `STORAGE | COPY_DST` and grow on
+    ///   demand. `editable == true`.
     ///
     /// [`new`]: GpuRenderer::new
+    /// [`new_paged`]: GpuRenderer::new_paged
     Truecolor {
-        /// Per-leaf colour base offsets (prefix sum of `count_occupied`).
-        base_buf: wgpu::Buffer,
-        /// The `N = ceil(len / per_chunk)` physical colour sub-buffers.
+        /// Per-leaf colour base offset into the pool (prefix sum for the static
+        /// path, editable page offset for the paged path). `COPY_DST` either way
+        /// (a static renderer just never patches it).
+        page_buf: wgpu::Buffer,
+        /// The physical colour sub-buffers (`chunk i` covers pool entries
+        /// `[i·per_chunk, (i+1)·per_chunk)`). The paged path grows/adds these.
         chunks: Vec<wgpu::Buffer>,
         /// One shared 1-`u32` buffer bound into the unused chunk slots `[N, N_MAX)`.
         dummy_buf: wgpu::Buffer,
+        /// Pool entries per chunk (== the CPU pool's `chunk_entries` for the paged
+        /// path). Drives the chunk-select in edit-method offsets.
+        per_chunk: u32,
+        /// Whether the paged edit methods ([`update_color_page`] etc.) apply. The
+        /// static build-once path is `false`.
+        ///
+        /// [`update_color_page`]: GpuRenderer::update_color_page
+        editable: bool,
     },
 }
 
@@ -102,6 +86,15 @@ pub struct GpuRenderer {
     /// The shading mode + its slot-5..8 buffers (palette vs truecolor).
     mode: RenderMode,
     camera_buf: wgpu::Buffer,
+    /// The hover-cursor uniform (@9). Zero — WebGPU zero-initializes buffers —
+    /// means inactive, so a renderer that never calls
+    /// [`set_cursor`](Self::set_cursor) renders byte-identically to a
+    /// cursor-free build.
+    cursor_buf: wgpu::Buffer,
+    /// The themed-sky uniform (@10), initialized to the product's original
+    /// gradient so a renderer that never calls [`set_sky`](Self::set_sky)
+    /// looks as it always did.
+    sky_buf: wgpu::Buffer,
     /// Max storage-buffer binding size, kept so [`reupload`](Self::reupload) can
     /// rebuild the structure buffers after a topology edit without the context.
     max_binding: u64,
@@ -146,20 +139,7 @@ fn select_render_mode(
             structure.leaf_color_base_words(),
             per_chunk,
         );
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("render layout (truecolor)"),
-            entries: &[
-                buffers::storage_entry(0, true), // nodes
-                buffers::storage_entry(1, true), // leaf_words
-                buffers::storage_entry(2, true), // leaf_bounds
-                buffers::uniform_entry(3),       // camera
-                output_entry,                    // output @4
-                buffers::storage_entry(5, true), // leaf_color_base
-                buffers::storage_entry(6, true), // leaf_color_0
-                buffers::storage_entry(7, true), // leaf_color_1
-                buffers::storage_entry(8, true), // leaf_color_2
-            ],
-        });
+        let layout = truecolor_layout(device, output_entry);
         // Scene-time pipeline selection: a scene with transparent leaves compiles the
         // front-to-back BLEND entry; otherwise the byte-identical opaque entry, so the
         // opaque path never pays for compositing. Same 7-binding layout either way.
@@ -172,9 +152,11 @@ fn select_render_mode(
             layout,
             source,
             RenderMode::Truecolor {
-                base_buf,
+                page_buf: base_buf,
                 chunks,
                 dummy_buf,
+                per_chunk,
+                editable: false,
             },
         ))
     } else {
@@ -190,17 +172,113 @@ fn select_render_mode(
                 output_entry,                    // output @4
                 buffers::storage_entry(5, true), // leaf_mat
                 buffers::storage_entry(6, true), // material_table
+                buffers::uniform_entry(9),       // hover cursor (zero = inactive)
+                buffers::uniform_entry(10),      // themed sky gradient
             ],
         });
         Ok((
             layout,
-            buffers::shader_source(include_str!("../shaders/render.wgsl")),
+            buffers::render_shader_source(include_str!("../shaders/render.wgsl")),
             RenderMode::Palette {
                 leaf_mat_buf,
                 table_buf,
             },
         ))
     }
+}
+
+/// The truecolor bind-group layout (9 entries: 3 structure + camera + output +
+/// `leaf_color_page` + 3 colour chunks). Identical for the static and paged
+/// paths, so both build it here.
+fn truecolor_layout(
+    device: &wgpu::Device,
+    output_entry: wgpu::BindGroupLayoutEntry,
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("render layout (truecolor)"),
+        entries: &[
+            buffers::storage_entry(0, true), // nodes
+            buffers::storage_entry(1, true), // leaf_words
+            buffers::storage_entry(2, true), // leaf_bounds
+            buffers::uniform_entry(3),       // camera
+            output_entry,                    // output @4
+            buffers::storage_entry(5, true), // leaf_color_page
+            buffers::storage_entry(6, true), // leaf_color_0
+            buffers::storage_entry(7, true), // leaf_color_1
+            buffers::storage_entry(8, true), // leaf_color_2
+            buffers::uniform_entry(9),       // hover cursor (zero = inactive)
+            buffers::uniform_entry(10),      // themed sky gradient
+        ],
+    })
+}
+
+/// The flat colour-pool image the GPU chunks tile: each leaf's rank-order colours
+/// placed at its page offset (padding entries left zero — never read, since a
+/// voxel's rank is always `< occupancy ≤ class`). This is the CPU mirror of what
+/// the GPU pool holds, built once at [`GpuRenderer::new_paged`].
+fn build_pool_image(pages: &voxel_core::ColorPages) -> Vec<u32> {
+    let mut image = vec![0u32; usize::try_from(pages.total_entries()).unwrap_or(0)];
+    for i in 0..pages.len() {
+        let base = pages.page_of(i) as usize;
+        let colors = pages.colors_of(i);
+        image[base..base + colors.len()].copy_from_slice(colors);
+    }
+    image
+}
+
+/// Builds the layout, entry-shader source, and slot-5..8 buffers for the
+/// **paged** (editable) truecolor path (brush-editing Stage A2). Mirrors
+/// [`select_render_mode`]'s truecolor arm but sources its buffers from the tree's
+/// colour pool (`pages`) with `COPY_DST` usages, and reads `per_chunk` from the
+/// pool so CPU page placement and GPU chunk-select stay aligned.
+fn select_paged_mode(
+    device: &wgpu::Device,
+    ctx: &GpuContext,
+    structure: &SchoolBBuffer,
+    pages: &voxel_core::ColorPages,
+    per_chunk: u32,
+    max_binding: u64,
+    output_entry: wgpu::BindGroupLayoutEntry,
+) -> Result<(wgpu::BindGroupLayout, String, RenderMode), GpuError> {
+    debug_assert_eq!(
+        buffers::N_MAX_CHUNKS,
+        3,
+        "the truecolor shader + layout bind exactly 3 chunk slots"
+    );
+    let n_res = structure.resolution().voxels_per_axis();
+    let pool_image = build_pool_image(pages);
+    let page_words = structure.leaf_color_page_words();
+    let base_bytes = (page_words.len() * 4) as u64;
+    buffers::probe_truecolor(
+        n_res,
+        pool_image.len(),
+        base_bytes,
+        per_chunk,
+        ctx.max_storage_buffers(),
+        max_binding,
+        ctx.max_buffer_size(),
+    )?;
+    let (chunks, page_buf, dummy_buf) =
+        buffers::upload_color_pool(device, &pool_image, page_words, per_chunk);
+    let layout = truecolor_layout(device, output_entry);
+    // Same scene-time opaque/BLEND selection as the static path, but keyed on the
+    // tree colour store's transparency (from_sparse derived the bounds bits from it).
+    let source = if pages.has_transparency() {
+        buffers::color_blend_shader_source(per_chunk, buffers::MAX_BLEND)
+    } else {
+        buffers::color_shader_source(per_chunk)
+    };
+    Ok((
+        layout,
+        source,
+        RenderMode::Truecolor {
+            page_buf,
+            chunks,
+            dummy_buf,
+            per_chunk,
+            editable: true,
+        },
+    ))
 }
 
 impl GpuRenderer {
@@ -228,20 +306,12 @@ impl GpuRenderer {
     ) -> Result<Self, GpuError> {
         let device = ctx.device.clone();
         let queue = ctx.queue.clone();
-
         let max_binding = ctx.max_storage_binding();
         let (node_buf, leaf_buf, bounds_buf) =
             buffers::upload_structure(&device, structure, max_binding)?;
-        let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("camera"),
-            size: std::mem::size_of::<GpuCamera>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         // bindings 0..4 (nodes/leaf_words/leaf_bounds/camera/output) are shared by
         // both modes; slots 5..8 and the entry shader differ.
         let output_entry = buffers::storage_texture_entry(4, OUTPUT_FORMAT);
-
         let (layout, shader_src, mode) = select_render_mode(
             &device,
             ctx,
@@ -251,12 +321,119 @@ impl GpuRenderer {
             max_binding,
             output_entry,
         )?;
+        Ok(Self::assemble(
+            ctx,
+            device,
+            queue,
+            node_buf,
+            leaf_buf,
+            bounds_buf,
+            layout,
+            shader_src,
+            mode,
+            max_binding,
+        ))
+    }
 
+    /// Builds an **editable paged** truecolor renderer (brush-editing Stage A2)
+    /// from a tree's colour pool ([`SparseTree::color_pages`]). `structure` is the
+    /// [`SchoolBBuffer::from_sparse`] of the same tree (it supplies the derived
+    /// `leaf_color_page` table and the transparency bits). The hit-read is
+    /// byte-identical to [`new`](Self::new)'s static path — only the page offsets
+    /// (editable pool pages vs prefix sums) and the buffer usages (`COPY_DST`,
+    /// growable) differ — so a paged scene renders identically to its build-once
+    /// bake while accepting in-place [`update_color_page`](Self::update_color_page)
+    /// / [`reupload_paged`](Self::reupload_paged) edits.
+    ///
+    /// [`SparseTree::color_pages`]: voxel_core::SparseTree::color_pages
+    ///
+    /// # Errors
+    /// [`GpuError`] as [`new`](Self::new): a structure buffer over the binding cap,
+    /// or the colour pool exceeding the compiled chunk count / device limits.
+    pub fn new_paged(
+        ctx: &GpuContext,
+        structure: &SchoolBBuffer,
+        pages: &voxel_core::ColorPages,
+    ) -> Result<Self, GpuError> {
+        let n_res = structure.resolution().voxels_per_axis();
+        let per_chunk =
+            u32::try_from(pages.chunk_entries()).map_err(|_| GpuError::Unsupported {
+                n: n_res,
+                reason: "colour pool chunk size exceeds u32",
+            })?;
+        let device = ctx.device.clone();
+        let queue = ctx.queue.clone();
+        let max_binding = ctx.max_storage_binding();
+        let (node_buf, leaf_buf, bounds_buf) =
+            buffers::upload_structure(&device, structure, max_binding)?;
+        let output_entry = buffers::storage_texture_entry(4, OUTPUT_FORMAT);
+        let (layout, shader_src, mode) = select_paged_mode(
+            &device,
+            ctx,
+            structure,
+            pages,
+            per_chunk,
+            max_binding,
+            output_entry,
+        )?;
+        Ok(Self::assemble(
+            ctx,
+            device,
+            queue,
+            node_buf,
+            leaf_buf,
+            bounds_buf,
+            layout,
+            shader_src,
+            mode,
+            max_binding,
+        ))
+    }
+
+    /// The shared construction tail: given the uploaded structure buffers, the
+    /// bind-group layout, the entry-shader source, and the slot-5..8 `mode`,
+    /// creates the camera buffer, compiles the pipeline, and wires up optional
+    /// GPU-timestamp resources. Used by both [`new_with_per_chunk`](Self::new_with_per_chunk)
+    /// and [`new_paged`](Self::new_paged).
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        ctx: &GpuContext,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        node_buf: wgpu::Buffer,
+        leaf_buf: wgpu::Buffer,
+        bounds_buf: wgpu::Buffer,
+        layout: wgpu::BindGroupLayout,
+        shader_src: String,
+        mode: RenderMode,
+        max_binding: u64,
+    ) -> Self {
+        let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("camera"),
+            size: std::mem::size_of::<GpuCamera>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // 8 f32s: pos.xyz, radius, normal.xyz, active. Zero-initialized by
+        // WebGPU ⇒ inactive by default (the byte-identical pin).
+        let cursor_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hover cursor"),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // The original sky gradient as {top, bottom} endpoints (it was linear
+        // in t per channel, so two endpoints reproduce it exactly).
+        let sky_default: [f32; 8] = [0.08, 0.10, 0.16, 1.0, 0.0, 0.0, 0.28, 1.0];
+        let sky_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sky"),
+            contents: bytemuck::cast_slice(&sky_default),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("render"),
             source: wgpu::ShaderSource::Wgsl(shader_src.into()),
         });
-
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("render pipeline layout"),
             bind_group_layouts: &[Some(&layout)],
@@ -270,7 +447,6 @@ impl GpuRenderer {
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
-
         let timing = ctx.supports_timestamps().then(|| {
             let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
                 label: Some("render timestamps"),
@@ -296,8 +472,7 @@ impl GpuRenderer {
                 period: queue.get_timestamp_period(),
             }
         });
-
-        Ok(Self {
+        Self {
             device,
             queue,
             pipeline,
@@ -307,9 +482,214 @@ impl GpuRenderer {
             bounds_buf,
             mode,
             camera_buf,
+            cursor_buf,
+            sky_buf,
             max_binding,
             timing,
-        })
+        }
+    }
+
+    /// Sets the sky gradient (theme changes): a vertical ramp from `top_rgba`
+    /// to `bottom_rgba` (sRGB RGBA8, R low), dithered per pixel on the GPU so
+    /// the subtle ramp never bands. One 32-byte uniform write.
+    pub fn set_sky(&self, top_rgba: u32, bottom_rgba: u32) {
+        #[allow(clippy::cast_precision_loss)] // a masked byte is exact in f32
+        let ch = |v: u32, shift: u32| ((v >> shift) & 0xff) as f32 / 255.0;
+        let unpack = |v: u32| [ch(v, 0), ch(v, 8), ch(v, 16), ch(v, 24)];
+        let data: [f32; 8] = {
+            let (t, b) = (unpack(top_rgba), unpack(bottom_rgba));
+            [t[0], t[1], t[2], t[3], b[0], b[1], b[2], b[3]]
+        };
+        self.queue
+            .write_buffer(&self.sky_buf, 0, bytemuck::cast_slice(&data));
+    }
+
+    /// Positions the hover-cursor ring (brush-editing Stage D): the highlight
+    /// where the brush sphere of `radius` voxels centred at `pos` (world voxel
+    /// space) intersects the surface. `active = false` zeroes the flag — the
+    /// default state, in which every render is byte-identical to a cursor-free
+    /// build. One 32-byte uniform write; cost only exists on hits.
+    pub fn set_cursor(&self, pos: [f32; 3], radius: f32, active: bool) {
+        let data: [f32; 8] = [
+            pos[0],
+            pos[1],
+            pos[2],
+            radius,
+            0.0,
+            0.0,
+            0.0,
+            if active { 1.0 } else { 0.0 },
+        ];
+        self.queue
+            .write_buffer(&self.cursor_buf, 0, bytemuck::cast_slice(&data));
+    }
+
+    /// The paged (editable) truecolor `per_chunk` if this is such a renderer.
+    fn paged_per_chunk(&self) -> Option<u32> {
+        match self.mode {
+            RenderMode::Truecolor {
+                editable: true,
+                per_chunk,
+                ..
+            } => Some(per_chunk),
+            _ => None,
+        }
+    }
+
+    /// Writes one leaf's colour page (`words`, padded to its class capacity) into
+    /// the pool at `offset_entries`, growing/adding the target chunk if the write
+    /// runs past its current size. Paired with an occupancy patch this is the
+    /// in-place edit path; a topology edit goes through
+    /// [`reupload_paged`](Self::reupload_paged) plus the pages it touched. Paged
+    /// (editable) truecolor only.
+    ///
+    /// # Errors
+    /// [`GpuError::Unsupported`] on a palette or static-truecolor renderer.
+    pub fn update_color_page(
+        &mut self,
+        offset_entries: u64,
+        words: &[u32],
+    ) -> Result<(), GpuError> {
+        let per_chunk = self.paged_per_chunk().ok_or(GpuError::Unsupported {
+            n: 0,
+            reason: "update_color_page requires a paged (editable) truecolor renderer",
+        })?;
+        let per = u64::from(per_chunk);
+        let chunk = offset_entries / per;
+        let local = offset_entries % per;
+        let end = local + words.len() as u64;
+        debug_assert!(
+            end <= per,
+            "a colour page must not straddle a chunk boundary"
+        );
+        self.grow_chunk(
+            u32::try_from(chunk).expect("chunk index fits u32"),
+            u32::try_from(end).expect("chunk-local end fits u32"),
+        )?;
+        let chunk = usize::try_from(chunk).expect("chunk index fits usize");
+        if let RenderMode::Truecolor { chunks, .. } = &self.mode {
+            self.queue
+                .write_buffer(&chunks[chunk], local * 4, bytemuck::cast_slice(words));
+        }
+        Ok(())
+    }
+
+    /// Rewrites leaf `leaf_idx`'s page-table entry to `page_offset` after an edit
+    /// moved its page (a class change on an in-place occupancy edit). Paired with
+    /// an [`update_color_page`](Self::update_color_page) of the new page's
+    /// contents. Paged (editable) truecolor only.
+    ///
+    /// # Errors
+    /// [`GpuError::Unsupported`] on a palette or static-truecolor renderer.
+    pub fn update_page_word(&self, leaf_idx: u32, page_offset: u32) -> Result<(), GpuError> {
+        let RenderMode::Truecolor {
+            editable: true,
+            page_buf,
+            ..
+        } = &self.mode
+        else {
+            return Err(GpuError::Unsupported {
+                n: 0,
+                reason: "update_page_word requires a paged (editable) truecolor renderer",
+            });
+        };
+        self.queue.write_buffer(
+            page_buf,
+            u64::from(leaf_idx) * 4,
+            bytemuck::bytes_of(&page_offset),
+        );
+        Ok(())
+    }
+
+    /// Ensures pool `chunk` exists and holds at least `new_entries` entries,
+    /// adding any missing lower chunks (each a full `per_chunk`) and growing the
+    /// target to a full `per_chunk` via `copy_buffer_to_buffer` (one-time per
+    /// chunk). Paged (editable) truecolor only.
+    ///
+    /// # Errors
+    /// [`GpuError::Unsupported`] on a palette or static-truecolor renderer.
+    pub fn grow_chunk(&mut self, chunk: u32, new_entries: u32) -> Result<(), GpuError> {
+        let per_chunk = self.paged_per_chunk().ok_or(GpuError::Unsupported {
+            n: 0,
+            reason: "grow_chunk requires a paged (editable) truecolor renderer",
+        })?;
+        let full_bytes = u64::from(per_chunk) * 4;
+        let want_bytes = u64::from(new_entries) * 4;
+        let chunk = chunk as usize;
+        let RenderMode::Truecolor { chunks, .. } = &mut self.mode else {
+            unreachable!("paged_per_chunk confirmed truecolor");
+        };
+        while chunks.len() <= chunk {
+            chunks.push(self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("leaf_color_pool_grow"),
+                size: full_bytes,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }));
+        }
+        if chunks[chunk].size() < want_bytes {
+            let grown = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("leaf_color_pool_grow"),
+                size: full_bytes,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let old_size = chunks[chunk].size();
+            let mut enc = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("grow chunk copy"),
+                });
+            enc.copy_buffer_to_buffer(&chunks[chunk], 0, &grown, 0, old_size);
+            self.queue.submit(std::iter::once(enc.finish()));
+            chunks[chunk] = grown;
+        }
+        Ok(())
+    }
+
+    /// Replaces the resident structure and page table after a topology edit on a
+    /// paged truecolor scene — the paged analogue of [`reupload`](Self::reupload).
+    /// Rebuilds nodes/leaves/bounds and the `leaf_color_page` buffer from
+    /// `structure` (a fresh [`SchoolBBuffer::from_sparse`]); the colour **pool is
+    /// untouched**, so the ~hundreds-of-MB colour data is never re-uploaded. The
+    /// caller re-uploads only the pages the edit actually changed via
+    /// [`update_color_page`](Self::update_color_page).
+    ///
+    /// # Errors
+    /// [`GpuError::BufferTooLarge`] if a structure buffer exceeds the binding cap,
+    /// or [`GpuError::Unsupported`] on a palette or static-truecolor renderer.
+    pub fn reupload_paged(&mut self, structure: &SchoolBBuffer) -> Result<(), GpuError> {
+        if self.paged_per_chunk().is_none() {
+            return Err(GpuError::Unsupported {
+                n: structure.resolution().voxels_per_axis(),
+                reason: "reupload_paged requires a paged (editable) truecolor renderer",
+            });
+        }
+        let (node_buf, leaf_buf, bounds_buf) =
+            buffers::upload_structure(&self.device, structure, self.max_binding)?;
+        self.node_buf = node_buf;
+        self.leaf_buf = leaf_buf;
+        self.bounds_buf = bounds_buf;
+        let mut page_words = structure.leaf_color_page_words().to_vec();
+        if page_words.is_empty() {
+            page_words = vec![0u32];
+        }
+        let new_page = wgpu::util::DeviceExt::create_buffer_init(
+            &self.device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("leaf_color_page"),
+                contents: bytemuck::cast_slice(&page_words),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            },
+        );
+        if let RenderMode::Truecolor { page_buf, .. } = &mut self.mode {
+            *page_buf = new_page;
+        }
+        Ok(())
     }
 
     /// Patches a single leaf onto the GPU after an in-place [`Edit::Leaf`].
@@ -325,15 +705,26 @@ impl GpuRenderer {
     ///
     /// [`Edit::Leaf`]: voxel_core::Edit::Leaf
     ///
+    /// Works for the palette path and the **paged** (editable) truecolor path —
+    /// both keep `leaf_buf`/`bounds_buf` `COPY_DST` — but the caller must also sync
+    /// the touched leaf's colour page on a paged scene (via
+    /// [`update_color_page`](Self::update_color_page)).
+    ///
     /// # Errors
-    /// Returns [`GpuError::Unsupported`] on a truecolor renderer: per-voxel colour
-    /// is build-once (an occupancy edit would leave `leaf_color` stale), so the
-    /// scene must be re-baked via [`new`](Self::new).
+    /// Returns [`GpuError::Unsupported`] on a **static** truecolor renderer:
+    /// per-voxel colour is build-once there, so the scene must be re-baked via
+    /// [`new`](Self::new).
     pub fn update_leaf(&self, structure: &SchoolBBuffer, leaf_idx: u32) -> Result<(), GpuError> {
-        if !matches!(self.mode, RenderMode::Palette { .. }) {
+        if matches!(
+            self.mode,
+            RenderMode::Truecolor {
+                editable: false,
+                ..
+            }
+        ) {
             return Err(GpuError::Unsupported {
                 n: structure.resolution().voxels_per_axis(),
-                reason: "truecolor renderer is build-once; re-bake via GpuRenderer::new after an edit",
+                reason: "static truecolor renderer is build-once; re-bake via GpuRenderer::new after an edit",
             });
         }
         let words = structure.leaf_at(leaf_idx).words32();
@@ -507,6 +898,8 @@ impl GpuRenderer {
             buffers::bind(2, self.bounds_buf.as_entire_binding()),
             buffers::bind(3, self.camera_buf.as_entire_binding()),
             buffers::bind(4, wgpu::BindingResource::TextureView(output)),
+            buffers::bind(9, self.cursor_buf.as_entire_binding()),
+            buffers::bind(10, self.sky_buf.as_entire_binding()),
         ];
         match &self.mode {
             RenderMode::Palette {
@@ -517,11 +910,12 @@ impl GpuRenderer {
                 entries.push(buffers::bind(6, table_buf.as_entire_binding()));
             }
             RenderMode::Truecolor {
-                base_buf,
+                page_buf,
                 chunks,
                 dummy_buf,
+                ..
             } => {
-                entries.push(buffers::bind(5, base_buf.as_entire_binding()));
+                entries.push(buffers::bind(5, page_buf.as_entire_binding()));
                 // Slots 6..8: real chunk `i` if present, else the shared dummy. The
                 // probe guaranteed `N <= N_MAX` and every valid hit `g < N*PER_CHUNK`,
                 // so a dummy slot is bound but never indexed by a real read.

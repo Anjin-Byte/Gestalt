@@ -27,9 +27,10 @@ struct Camera {
 @group(0) @binding(3) var<uniform> camera: Camera;
 @group(0) @binding(4) var output: texture_storage_2d<rgba8unorm, write>;
 
-// Per-leaf colour base (prefix sum of count_occupied) + N_MAX=3 colour chunks —
-// identical layout to render_truecolor.wgsl.
-@group(0) @binding(5) var<storage, read> leaf_color_base: array<u32>;
+// Per-leaf colour *base offset* into the colour pool + N_MAX=3 colour chunks —
+// identical layout to render_truecolor.wgsl (see its note: prefix-sum base for
+// the static path, editable pool page offset for the paged path; same read).
+@group(0) @binding(5) var<storage, read> leaf_color_page: array<u32>;
 @group(0) @binding(6) var<storage, read> leaf_color_0: array<u32>;
 @group(0) @binding(7) var<storage, read> leaf_color_1: array<u32>;
 @group(0) @binding(8) var<storage, read> leaf_color_2: array<u32>;
@@ -65,7 +66,7 @@ fn read_leaf_color(g: u32) -> u32 {
 // The unpacked colour (sRGB RGBA8 → [0,1], A in .w) of the occupied voxel at this
 // leaf slot + intra-leaf morton — the SAME `g = base + rank` read the opaque path does.
 fn voxel_color(slot: u32, vox: u32) -> vec4<f32> {
-    let g = leaf_color_base[slot] + leaf_color_rank(slot, vox);
+    let g = leaf_color_page[slot] + leaf_color_rank(slot, vox);
     return unpack4x8unorm(read_leaf_color(g));
 }
 
@@ -182,10 +183,9 @@ fn render_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let acc = traverse_and_composite(camera.eye, dir, camera.n, camera.dims.z);
 
-    // The same sky gradient as the opaque path, composited under residual
+    // The same themed sky as the opaque path, composited under residual
     // transmittance (1 - acc.a). Opaque backdrop (acc.a == 1) → just acc.rgb.
-    let t = f32(gid.y) / h;
-    let sky = vec3<f32>(0.08 * (1.0 - t), 0.10 * (1.0 - t), 0.16 + 0.12 * t);
+    let sky = sky_color(gid.xy, h).rgb;
     let rgb = acc.rgb + (1.0 - acc.a) * sky;
     textureStore(output, vec2<u32>(gid.x, gid.y), vec4<f32>(rgb, 1.0));
 }

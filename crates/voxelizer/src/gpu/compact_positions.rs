@@ -33,7 +33,7 @@ impl GpuVoxelizer {
             return Ok(Vec::new());
         }
 
-        let positions = self.readback_positions(&buffer, count)?;
+        let positions = self.readback_positions(&buffer, count).await?;
         Ok(positions)
     }
 
@@ -311,10 +311,10 @@ impl GpuVoxelizer {
             )));
         }
 
-        let counter = map_buffer_u32(&read_counter, &self.device)?;
+        let counter = map_buffer_u32(&read_counter, &self.device).await?;
         let count = counter.first().copied().unwrap_or(0).min(max_positions);
 
-        let debug = map_buffer_u32(&read_debug, &self.device)?;
+        let debug = map_buffer_u32(&read_debug, &self.device).await?;
         let had_workgroups = debug.first().copied().unwrap_or(0) > 0;
         let had_hits = debug.get(1).copied().unwrap_or(0) > 0;
 
@@ -329,7 +329,7 @@ impl GpuVoxelizer {
 // === Readback ===
 
 impl GpuVoxelizer {
-    fn readback_positions(
+    async fn readback_positions(
         &self,
         buffer: &wgpu::Buffer,
         count: u32,
@@ -350,7 +350,7 @@ impl GpuVoxelizer {
         self.queue.submit([encoder.finish()]);
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
-        let data = map_buffer_f32(&read_positions, &self.device)?;
+        let data = map_buffer_f32(&read_positions, &self.device).await?;
 
         let mut positions = Vec::with_capacity(count as usize * 3);
         for i in 0..count as usize {

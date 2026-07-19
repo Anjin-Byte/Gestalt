@@ -16,10 +16,6 @@ impl GpuVoxelizer {
     /// Voxelizes a mesh surface into a dense voxel grid.
     ///
     /// Returns occupancy bitfield, optional owner IDs, and optional colors.
-    // Stays `async` to preserve the public API contract (the differential test
-    // and callers `pollster::block_on(...)` it); the readback path is now
-    // synchronous.
-    #[allow(clippy::unused_async)]
     pub async fn voxelize_surface(
         &self,
         mesh: &MeshInput,
@@ -53,7 +49,9 @@ impl GpuVoxelizer {
 
         self.dispatch_dense(&bind_group, tiles)?;
 
-        let output = self.readback_dense(&buffers, grid, mesh, tiles, opts)?;
+        let output = self
+            .readback_dense(&buffers, grid, mesh, tiles, opts)
+            .await?;
         Ok(output)
     }
 }
@@ -419,7 +417,7 @@ impl GpuVoxelizer {
 // === Readback ===
 
 impl GpuVoxelizer {
-    fn readback_dense(
+    async fn readback_dense(
         &self,
         buffers: &DenseBuffers,
         grid: &VoxelGrid,
@@ -478,13 +476,13 @@ impl GpuVoxelizer {
         self.queue.submit([encoder.finish()]);
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
-        let occupancy = map_buffer_u32(&read_occupancy, &self.device)?;
+        let occupancy = map_buffer_u32(&read_occupancy, &self.device).await?;
         let owner = match &read_owner {
-            Some(buf) => Some(map_buffer_u32(buf, &self.device)?),
+            Some(buf) => Some(map_buffer_u32(buf, &self.device).await?),
             None => None,
         };
         let color = match &read_color {
-            Some(buf) => Some(map_buffer_u32(buf, &self.device)?),
+            Some(buf) => Some(map_buffer_u32(buf, &self.device).await?),
             None => None,
         };
 

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+
+# Packed portfolio demos — generated from demo-assets/src by `make demos`
+# (tools/demo-pack). Regenerated deterministically; not committed. Vite hashes
+# these into dist/ at build time via the ?url imports in src/demos.ts.
+src/assets/demos/

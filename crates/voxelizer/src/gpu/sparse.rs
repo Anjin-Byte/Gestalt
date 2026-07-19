@@ -8,6 +8,7 @@ use crate::core::{
 };
 use crate::csr::{BrickTriangleCsr, build_brick_csr};
 use crate::error::VoxelizeGpuError;
+use voxel_core::Progress;
 
 use super::map_buffer_u32;
 use super::{GpuVoxelizer, Params};
@@ -16,9 +17,6 @@ impl GpuVoxelizer {
     /// Voxelizes a mesh surface into sparse brick-based output.
     ///
     /// Only allocates storage for bricks that contain geometry.
-    // Stays `async` to preserve the public GPU-orchestration API contract
-    // (callers `.await` it); the readback path is now synchronous.
-    #[allow(clippy::unused_async)]
     pub async fn voxelize_surface_sparse(
         &self,
         mesh: &MeshInput,
@@ -43,7 +41,7 @@ impl GpuVoxelizer {
             return Ok(empty_sparse_output(mesh, grid, brick_dim, opts));
         }
 
-        self.run_sparse(mesh, grid, opts, brick_dim, csr)
+        self.run_sparse(mesh, grid, opts, brick_dim, csr).await
     }
 
     /// Voxelizes a mesh and compacts the output into `CompactVoxel` tuples.
@@ -71,14 +69,30 @@ impl GpuVoxelizer {
         }
 
         // Use chunked voxelization to stay within GPU dispatch limits,
-        // then compact each chunk independently and merge results.
+        // then compact each chunk independently and merge results. Callers
+        // that observe progress per stage (the web front end labels them as
+        // separate phases) call the two halves themselves.
         let chunks = self
-            .voxelize_surface_sparse_chunked(mesh, grid, opts, 0)
+            .voxelize_surface_sparse_chunked(mesh, grid, opts, 0, &mut Progress::none())
             .await?;
+        self.compact_chunks(&chunks, material_table, g_origin, &mut Progress::none())
+            .await
+    }
 
+    /// The compaction half of [`compact_surface_sparse`](Self::compact_surface_sparse):
+    /// resolves each voxelized chunk's occupancy + owners into global
+    /// `(coord, material)` voxels, ticking `progress` once per chunk.
+    pub async fn compact_chunks(
+        &self,
+        chunks: &[SparseVoxelizationOutput],
+        material_table: &[u32],
+        g_origin: [i32; 3],
+        progress: &mut Progress<'_>,
+    ) -> Result<Vec<CompactVoxel>, VoxelizeGpuError> {
+        let mut meter = progress.meter(chunks.len() as u64);
         let mut all_voxels: Vec<CompactVoxel> = Vec::new();
 
-        for sparse in &chunks {
+        for sparse in chunks {
             let owner_id = sparse.owner_id.as_ref().ok_or_else(|| {
                 VoxelizeGpuError::PipelineValidation(
                     "voxelize_surface_sparse did not produce owner_id".to_string(),
@@ -105,21 +119,20 @@ impl GpuVoxelizer {
                 .await?;
 
             all_voxels.extend(voxels);
+            meter.add(1);
         }
 
         Ok(all_voxels)
     }
 
     /// Voxelizes in chunks to handle large meshes within GPU limits.
-    // Stays `async` to preserve the public GPU-orchestration API contract
-    // (callers `.await` it); the readback path is now synchronous.
-    #[allow(clippy::unused_async)]
     pub async fn voxelize_surface_sparse_chunked(
         &self,
         mesh: &MeshInput,
         grid: &VoxelGrid,
         opts: &VoxelizeOpts,
         chunk_size: usize,
+        progress: &mut Progress<'_>,
     ) -> Result<Vec<SparseVoxelizationOutput>, VoxelizeGpuError> {
         grid.validate()
             .map_err(|e| VoxelizeGpuError::PipelineValidation(e.to_string()))?;
@@ -137,10 +150,11 @@ impl GpuVoxelizer {
 
         let chunk_size =
             self.compute_chunk_size(brick_dim, opts, chunk_size, csr.brick_origins.len());
-        self.process_chunks(mesh, grid, opts, brick_dim, &csr, chunk_size)
+        self.process_chunks(mesh, grid, opts, brick_dim, &csr, chunk_size, progress)
+            .await
     }
 
-    fn run_sparse(
+    async fn run_sparse(
         &self,
         mesh: &MeshInput,
         grid: &VoxelGrid,
@@ -159,8 +173,9 @@ impl GpuVoxelizer {
 
         self.dispatch_sparse(&bind_group, brick_count)?;
 
-        let output =
-            self.readback_sparse(&buffers, mesh, grid, brick_dim, csr.brick_origins, opts)?;
+        let output = self
+            .readback_sparse(&buffers, mesh, grid, brick_dim, csr.brick_origins, opts)
+            .await?;
 
         Ok(output)
     }
@@ -227,7 +242,9 @@ impl GpuVoxelizer {
         chunk_size.max(1)
     }
 
-    fn process_chunks(
+    // The extra argument is the uniform progress sink, not state.
+    #[allow(clippy::too_many_arguments)]
+    async fn process_chunks(
         &self,
         mesh: &MeshInput,
         grid: &VoxelGrid,
@@ -235,16 +252,21 @@ impl GpuVoxelizer {
         brick_dim: u32,
         csr: &BrickTriangleCsr,
         chunk_size: usize,
+        progress: &mut Progress<'_>,
     ) -> Result<Vec<SparseVoxelizationOutput>, VoxelizeGpuError> {
         let mut chunks = Vec::new();
         let brick_count = csr.brick_origins.len();
+        let mut meter = progress.meter(brick_count.div_ceil(chunk_size.max(1)) as u64);
         let mut start = 0usize;
 
         while start < brick_count {
             let end = (start + chunk_size).min(brick_count);
             let sub_csr = extract_chunk_csr(csr, start, end);
-            let output = self.run_sparse(mesh, grid, opts, brick_dim, sub_csr)?;
+            let output = self
+                .run_sparse(mesh, grid, opts, brick_dim, sub_csr)
+                .await?;
             chunks.push(output);
+            meter.add(1);
             start = end;
         }
 
@@ -574,7 +596,7 @@ impl GpuVoxelizer {
 // === Readback ===
 
 impl GpuVoxelizer {
-    fn readback_sparse(
+    async fn readback_sparse(
         &self,
         buffers: &SparseBuffers,
         mesh: &MeshInput,
@@ -631,10 +653,10 @@ impl GpuVoxelizer {
         self.queue.submit([encoder.finish()]);
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
-        let occupancy = map_buffer_u32(&read_occupancy, &self.device)?;
-        let owner = map_buffer_u32(&read_owner, &self.device)?;
-        let color = map_buffer_u32(&read_color, &self.device)?;
-        let debug = map_buffer_u32(&read_debug, &self.device)?;
+        let occupancy = map_buffer_u32(&read_occupancy, &self.device).await?;
+        let owner = map_buffer_u32(&read_owner, &self.device).await?;
+        let color = map_buffer_u32(&read_color, &self.device).await?;
+        let debug = map_buffer_u32(&read_debug, &self.device).await?;
 
         let brick_count = brick_origins.len() as u32;
 

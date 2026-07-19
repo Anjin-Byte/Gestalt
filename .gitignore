@@ -9,21 +9,9 @@
 *.trace
 *.gputrace
 
-# Symlinked engineering standards vault (see CLAUDE.md / README).
-Engineering_Codex
+# wasm-pack output for the web front end — a build artifact (the .d.ts surface
+# is reviewed via the CI diff gate, not by committing the package).
+crates/voxel-web/pkg/
 
-# Vendored external clones — each is its own git repo (STBN blue noise, XeGTAO
-# reference, OIDN denoiser source), not part of this repo's history. They were
-# tracked as accidental gitlinks; ignored here after `git rm --cached`.
-/STBN/
-/XeGTAO/
-/oidn/
-crates/voxelizer/docs
-docs
-reference_code_for_materials
-models
-
-CAPTURE.md
-caves-perf.md
-idea.md
-FINDINGS.md
+docs/*
+models/*

@@ -123,7 +123,7 @@ fn sparse_bridge_matches_dense_path() {
     let voxels =
         pollster::block_on(gpu.compact_surface_sparse(&mesh, &grid, &opts, &packed, [0, 0, 0]))
             .unwrap();
-    let (sparse_tree, dropped) = tree_from_compact(r, &voxels);
+    let (sparse_tree, dropped) = tree_from_compact(r, &voxels, &mut voxelizer::Progress::none());
 
     assert_eq!(dropped, 0, "no voxel should fall outside the fitted grid");
     // The colour table is built by the shared `build_global_table`, so the two
@@ -269,7 +269,7 @@ fn sparse_path_validates_at_2048() {
     hist_print("res 2048", &voxels);
 
     let t1 = std::time::Instant::now();
-    let (tree, dropped) = tree_from_compact(r, &voxels);
+    let (tree, dropped) = tree_from_compact(r, &voxels, &mut voxelizer::Progress::none());
     let t_assemble = t1.elapsed();
 
     let ram_mib = voxels.len() * std::mem::size_of::<CompactVoxel>() / (1024 * 1024);
@@ -362,7 +362,7 @@ fn multi_material_leaf_round_trips_through_read_slot() {
     let voxels =
         pollster::block_on(gpu.compact_surface_sparse(&mesh, &grid, &opts, &packed, [0, 0, 0]))
             .unwrap();
-    let (sparse_tree, dropped) = tree_from_compact(r, &voxels);
+    let (sparse_tree, dropped) = tree_from_compact(r, &voxels, &mut voxelizer::Progress::none());
     assert_eq!(dropped, 0);
     let buf = SchoolBBuffer::from_sparse(&sparse_tree);
 
@@ -435,7 +435,7 @@ fn truecolor_bakes_littlest_tokyo_textures() {
     let voxels =
         pollster::block_on(gpu.compact_surface_sparse(&mesh, &grid, &opts, &packed, [0, 0, 0]))
             .unwrap();
-    let (tree, _dropped) = tree_from_compact(r, &voxels);
+    let (tree, _dropped) = tree_from_compact(r, &voxels, &mut voxelizer::Progress::none());
     let mut structure = SchoolBBuffer::from_sparse(&tree);
 
     let t = std::time::Instant::now();
@@ -446,6 +446,7 @@ fn truecolor_bakes_littlest_tokyo_textures() {
         &grid,
         opts.epsilon,
         Some(&packed),
+        &mut voxelizer::Progress::none(),
     );
     let secs = t.elapsed().as_secs_f64();
 

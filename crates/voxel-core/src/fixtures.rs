@@ -190,6 +190,56 @@ impl OccupancyField for WireLattice {
     }
 }
 
+/// A gyroid: the triply periodic minimal surface
+/// `sin x·cos y + sin y·cos z + sin z·cos x = 0`, realised as a thin isosurface
+/// shell. Smooth, bicontinuous, space-filling — the sleek "computational" look
+/// (TPMS lattices, generative art, 3-D-print infill) that makes a good landing
+/// backdrop. Procedural and resolution-independent: `cells` unit cells span the
+/// grid whatever the voxel count.
+#[derive(Debug, Clone, Copy)]
+pub struct Gyroid {
+    /// Grid resolution.
+    pub resolution: Resolution,
+    /// Unit cells across the grid (spatial frequency).
+    pub cells: f64,
+    /// Half-thickness of the occupied shell around the `F = 0` surface, in field
+    /// units (`F ∈ [-1.5, 1.5]`). Larger ⇒ a chunkier surface.
+    pub thickness: f64,
+}
+
+impl Gyroid {
+    /// Two cells across the grid, with a shell thick enough to read as a solid
+    /// surface at the 128³ landing resolution.
+    #[must_use]
+    pub const fn new(resolution: Resolution) -> Self {
+        Self {
+            resolution,
+            cells: 2.0,
+            thickness: 0.35,
+        }
+    }
+}
+
+impl OccupancyField for Gyroid {
+    fn resolution(&self) -> Resolution {
+        self.resolution
+    }
+
+    fn is_occupied(&self, c: VoxelCoord) -> bool {
+        if !c.in_bounds(self.resolution) {
+            return false;
+        }
+        // Voxel centre in radians, `cells` periods across the grid.
+        let scale =
+            self.cells * std::f64::consts::TAU / f64::from(self.resolution.voxels_per_axis());
+        let px = (f64::from(c.x) + 0.5) * scale;
+        let py = (f64::from(c.y) + 0.5) * scale;
+        let pz = (f64::from(c.z) + 0.5) * scale;
+        let field = px.sin() * py.cos() + py.sin() * pz.cos() + pz.sin() * px.cos();
+        field.abs() < self.thickness
+    }
+}
+
 /// Uniform sparse "dust": pseudo-random voxels at ~`1/density` occupancy.
 /// **Warp-divergence stress** (analysis #4): adjacent pixels' rays hit
 /// scattered voxels at unrelated depths (or miss while neighbors hit), so warp
@@ -394,6 +444,14 @@ mod tests {
             (0.12..0.35).contains(&caves),
             "caves fill {caves} off target"
         );
+    }
+
+    #[test]
+    fn gyroid_is_a_space_filling_shell_not_empty_or_solid() {
+        // The landing backdrop: a partial isosurface shell — enough to read as a
+        // flowing surface, far from empty or solid, at the 128³ landing res.
+        let fill = fill_fraction(&Gyroid::new(res(128)));
+        assert!((0.05..0.5).contains(&fill), "gyroid fill {fill} off target");
     }
 
     #[test]

@@ -15,6 +15,7 @@ name = "voxel-viewer"
 path = "src/main.rs"
 
 [dependencies]
+voxel-camera = { workspace = true }
 voxel-core = { workspace = true }
 voxel-gpu = { workspace = true }
 voxelizer = { workspace = true }

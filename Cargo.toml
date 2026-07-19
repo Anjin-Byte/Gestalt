@@ -2,6 +2,9 @@
 # ships no package of its own (Engineering Codex: Cargo Workspace Configuration).
 [workspace]
 members = ["crates/*", "tools/*"]
+# tools/demo-pack is a standalone Node tool (the portfolio demo packer), not a
+# Cargo crate — keep the `tools/*` glob from trying to read a Cargo.toml there.
+exclude = ["tools/demo-pack"]
 default-members = ["crates/voxel-cli"]
 resolver = "3"
 
@@ -14,6 +17,8 @@ repository = "https://github.com/Anjin-Byte/friendly-journey"
 
 [workspace.dependencies]
 # Internal crates (path deps; the dependency graph runs inward toward voxel-core).
+voxel-brush = { path = "crates/voxel-brush" }
+voxel-camera = { path = "crates/voxel-camera" }
 voxel-core = { path = "crates/voxel-core" }
 voxel-gpu = { path = "crates/voxel-gpu" }
 voxelizer = { path = "crates/voxelizer" }
@@ -22,6 +27,10 @@ voxelizer = { path = "crates/voxelizer" }
 # version-churny and MUST be pinned centrally (adversarial review R6).
 thiserror = "2"
 anyhow = "1"
+# Oneshot futures for GPU readbacks that must await on wasm32 (voxelizer,
+# voxel-gpu): the map result arrives over a channel both a blocking native
+# poll and the browser event loop can complete.
+futures-channel = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
 glam = "0.33"
 wgpu = "29"

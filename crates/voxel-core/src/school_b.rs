@@ -52,6 +52,16 @@ pub struct SchoolBBuffer {
     /// base offset into [`leaf_color`](Self::leaf_color) for each leaf. Empty until
     /// [`assemble_leaf_color`](Self::assemble_leaf_color) runs.
     leaf_color_base: Vec<u32>,
+    /// Per-leaf **paged** colour offset (slot-parallel with `leaves`): the entry
+    /// offset of each leaf's page in the editable colour pool
+    /// ([`SparseTree::color_pages`], brush-editing Stage A1). This is the editable
+    /// analogue of [`leaf_color_base`](Self::leaf_color_base) — the GPU reads
+    /// `pool[leaf_color_page[slot] + rank(morton)]` — but derived from the tree's
+    /// pool allocations rather than a prefix sum, so it survives edits. Empty
+    /// unless the source tree carries an editable colour store; populated by
+    /// [`from_sparse`](Self::from_sparse) and kept in step by
+    /// [`patch_leaf_color_page`](Self::patch_leaf_color_page).
+    leaf_color_page: Vec<u32>,
     /// `true` once [`assemble_leaf_color`](Self::assemble_leaf_color) baked at least
     /// one semi-transparent voxel (alpha `< 255`), i.e. some leaf carries
     /// [`LeafBounds::TRANSPARENCY_BIT`]. Routes the renderer to the BLEND pipeline.
@@ -113,7 +123,7 @@ impl SchoolBBuffer {
     pub fn from_sparse(tree: &SparseTree) -> Self {
         let resolution = tree.resolution();
         let leaves = tree.leaves_slice().to_vec();
-        let leaf_bounds = leaves.iter().map(|l| l.occupied_bounds().pack()).collect();
+        let mut leaf_bounds: Vec<u32> = leaves.iter().map(|l| l.occupied_bounds().pack()).collect();
         // Derive each leaf's packed material slot from the tree's per-voxel
         // materials (occupancy gates which voxels enter the palette). Concatenated
         // at the fixed STRIDE_W stride so leaf_idx → slot is a multiply, like the
@@ -125,6 +135,23 @@ impl SchoolBBuffer {
                 pack_leaf(tree.leaf_materials(idx), |x, y, z| leaf.get_local(x, y, z))
             })
             .collect();
+        // The editable colour store's page table (empty for non-truecolor trees):
+        // one entry offset per leaf, straight from the tree's pool allocations.
+        // A paged colour store is also the transparency source for its scene (the
+        // build-once `assemble_leaf_color` path sets these bits itself, later), so
+        // derive each leaf's `TRANSPARENCY_BIT` and the scene flag from it here.
+        let mut has_transparency = false;
+        let leaf_color_page: Vec<u32> = if let Some(pages) = tree.color_pages() {
+            for (i, bound) in leaf_bounds.iter_mut().enumerate() {
+                if pages.leaf_transparent(i) {
+                    *bound |= LeafBounds::TRANSPARENCY_BIT;
+                    has_transparency = true;
+                }
+            }
+            (0..pages.len()).map(|i| pages.page_of(i)).collect()
+        } else {
+            Vec::new()
+        };
         let mut nodes = Vec::new();
 
         let k = resolution.internal_levels();
@@ -145,7 +172,8 @@ impl SchoolBBuffer {
             // populates these); empty means "no per-voxel colour buffer".
             leaf_color: Vec::new(),
             leaf_color_base: Vec::new(),
-            has_transparency: false,
+            leaf_color_page,
+            has_transparency,
             source_gen: tree.topology_generation(),
         }
     }
@@ -352,6 +380,37 @@ impl SchoolBBuffer {
         });
         let base = idx as usize * STRIDE_W;
         self.leaf_mat[base..base + STRIDE_W].copy_from_slice(&slot);
+    }
+
+    /// The per-leaf paged colour offsets (slot-parallel with `leaves`), or empty
+    /// if the source tree carried no editable colour store. The GPU reads a hit
+    /// colour as `pool[leaf_color_page[slot] + rank(morton)]`.
+    #[must_use]
+    pub fn leaf_color_page_words(&self) -> &[u32] {
+        &self.leaf_color_page
+    }
+
+    /// Re-derives leaf `idx`'s paged colour offset from `tree` after an edit that
+    /// may have moved its page — an [`Edit::Color`](crate::Edit::Color) recolour
+    /// (page unchanged) or an occupancy edit that grew/shrank the leaf across a
+    /// size-class boundary (page reallocated). Like [`patch_leaf`](Self::patch_leaf),
+    /// it reads from `tree` and is gated on the topology generation.
+    ///
+    /// # Panics
+    /// Panics if `tree` has had an [`Edit::Topology`](crate::Edit::Topology) change
+    /// since this buffer was built (leaf indices renumbered) — re-run
+    /// [`from_sparse`](Self::from_sparse); or if `tree` carries no colour store.
+    pub fn patch_leaf_color_page(&mut self, tree: &SparseTree, idx: u32) {
+        assert_eq!(
+            tree.topology_generation(),
+            self.source_gen,
+            "patch_leaf_color_page on a topology-stale buffer (leaf indices have been \
+             renumbered); re-run SchoolBBuffer::from_sparse after a topology edit"
+        );
+        let pages = tree
+            .color_pages()
+            .expect("patch_leaf_color_page on a tree with no colour store");
+        self.leaf_color_page[idx as usize] = pages.page_of(idx as usize);
     }
 
     /// The leaf brick at `idx` (e.g. to fetch the words to re-upload after a
@@ -852,6 +911,108 @@ mod tests {
             }
         }
         assert!(compared > 1000);
+    }
+
+    // ---- brush-editing Stage A1: the derived paged colour table --------------
+
+    /// A small truecolor tree: `voxels` occupied, colours installed in slot order.
+    fn colored_tree(r: Resolution, voxels: &[VoxelCoord]) -> SparseTree {
+        let mut tree = SparseTree::from_voxels(r, voxels.iter().map(|&c| (c, 0u16)));
+        let occ = usize::try_from(tree.occupied_voxels()).unwrap();
+        let colors: Vec<u32> = (0..occ)
+            .map(|i| 0xFF00_0000 | u32::try_from(i).unwrap())
+            .collect();
+        tree.install_colors(colors.into_iter());
+        tree
+    }
+
+    #[test]
+    fn from_sparse_derives_the_paged_colour_table() {
+        let r = res(32);
+        let v = VoxelCoord::new;
+        let tree = colored_tree(r, &[v(0, 0, 0), v(1, 0, 0), v(9, 0, 0)]);
+        let b = SchoolBBuffer::from_sparse(&tree);
+        // One page offset per leaf, straight from the tree's pool allocations.
+        let pages = tree.color_pages().unwrap();
+        assert_eq!(b.leaf_color_page_words().len(), b.leaves().len());
+        for i in 0..b.leaves().len() {
+            assert_eq!(b.leaf_color_page_words()[i], pages.page_of(i), "page[{i}]");
+        }
+        // A non-truecolor tree derives an empty table.
+        let plain = SparseTree::build(&OctantFractal::sierpinski_tetrahedron(r));
+        assert!(
+            SchoolBBuffer::from_sparse(&plain)
+                .leaf_color_page_words()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn paged_offsets_equal_prefix_sum_when_class_waste_is_zero() {
+        // The prefix-sum bridge: when every leaf is fully occupied (512 voxels),
+        // `class_for` wastes nothing, so `install_colors`' canonical page offsets
+        // are exactly `assemble_leaf_color`'s prefix-sum `leaf_color_base` — the
+        // paged world reduces to today's build-once layout in the zero-waste case.
+        let r = res(32); // a Solid fills every 8³ brick → all leaves are 512-full
+        let solid = SparseTree::build(&Solid { resolution: r });
+        assert!(solid.leaf_count() > 1, "want several full leaves");
+
+        let occ = usize::try_from(solid.occupied_voxels()).unwrap();
+        let mut colored = solid.clone();
+        colored.install_colors((0..occ).map(|i| 0xFF00_0000 | u32::try_from(i).unwrap()));
+        let paged = SchoolBBuffer::from_sparse(&colored);
+
+        let mut baked = SchoolBBuffer::from_sparse(&solid);
+        baked.assemble_leaf_color(&solid, |_| [1, 2, 3, 255]);
+
+        assert_eq!(
+            paged.leaf_color_page_words(),
+            baked.leaf_color_base_words(),
+            "paged offsets must equal the prefix-sum base when class waste is zero",
+        );
+    }
+
+    #[test]
+    fn patch_leaf_color_page_matches_a_fresh_build() {
+        let r = res(32);
+        let v = VoxelCoord::new;
+
+        // (a) A pure recolour (Edit::Color) leaves the page in place; patch is a
+        //     consistent no-op vs a fresh build.
+        let mut tree = colored_tree(r, &[v(0, 0, 0), v(1, 0, 0), v(2, 0, 0)]);
+        let mut b = SchoolBBuffer::from_sparse(&tree);
+        let idx = match tree.set_color(v(1, 0, 0), 0xFF11_2233) {
+            Edit::Color { leaf } => leaf,
+            other => panic!("expected Edit::Color, got {other:?}"),
+        };
+        b.patch_leaf_color_page(&tree, idx);
+        assert_eq!(
+            b.leaf_color_page_words(),
+            SchoolBBuffer::from_sparse(&tree).leaf_color_page_words(),
+        );
+
+        // (b) An in-place add that crosses a size class (32 → 64) reallocates the
+        //     page; patch_leaf + patch_leaf_color_page must track the move.
+        let coords: Vec<VoxelCoord> = (0..32u32)
+            .map(|m| crate::morton::decode(u64::from(m)))
+            .collect();
+        let mut tree = colored_tree(r, &coords);
+        assert_eq!(tree.leaf_count(), 1);
+        let mut b = SchoolBBuffer::from_sparse(&tree);
+        let extra = crate::morton::decode(32); // 33rd voxel in the same brick
+        let idx = match tree.set_voxel_colored(extra, true, 0xFF00_00AA) {
+            Edit::Leaf(i) => i,
+            other => panic!("expected in-place Edit::Leaf, got {other:?}"),
+        };
+        b.patch_leaf(&tree, idx);
+        b.patch_leaf_color_page(&tree, idx);
+        let fresh = SchoolBBuffer::from_sparse(&tree);
+        assert_eq!(
+            b.leaf_color_page_words(),
+            fresh.leaf_color_page_words(),
+            "colour page table drifted after a class-crossing add",
+        );
+        assert_eq!(b.leaves(), fresh.leaves(), "occupancy drifted after patch");
     }
 
     #[test]

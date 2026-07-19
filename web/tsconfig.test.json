@@ -1,0 +1,13 @@
+{
+  // The test project: the app profile plus the vitest import. The one named
+  // divergence (Codex: test-file relaxations must be named): skipLibCheck is
+  // on here because vitest's declaration files reference Node ambient types
+  // this browser suite deliberately does not load — test *source* still gets
+  // the full strictness profile.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"],
+  "exclude": []
+}

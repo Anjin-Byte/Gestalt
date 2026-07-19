@@ -14,6 +14,10 @@
 //! - [`stl`] — STL, gated behind the `stl` feature. The simplest format: no
 //!   scene graph, no transforms, and no materials — facets are already
 //!   triangles in model space.
+//! - [`vox`] — `MagicaVoxel`, gated behind the `vox` feature. **Voxel-native**:
+//!   no `MeshInput` and no voxelization pass — it yields voxels + palette for
+//!   `SparseTree::from_voxels` directly, so it sits outside the [`load_mesh`]
+//!   dispatcher.
 //!
 //! # Dispatch
 //! [`load_mesh`] selects a format from the file extension and routes to the
@@ -22,23 +26,66 @@
 //! [`VoxelizerError::MeshLoad`]. The module compiles under any feature
 //! combination, including none of `gltf` / `obj` / `stl`.
 
+#[cfg(feature = "cvox")]
+pub mod cvox;
 #[cfg(feature = "gltf")]
 pub mod gltf;
 #[cfg(feature = "obj")]
 pub mod obj;
 #[cfg(feature = "stl")]
 pub mod stl;
+#[cfg(feature = "vox")]
+pub mod vox;
 
+#[cfg(feature = "cvox")]
+pub use cvox::load_cvox_slice;
 #[cfg(feature = "gltf")]
 pub use gltf::{load_gltf_path, load_gltf_slice};
 #[cfg(feature = "obj")]
 pub use obj::{load_obj_path, load_obj_slice};
 #[cfg(feature = "stl")]
 pub use stl::{load_stl_path, load_stl_slice};
+#[cfg(feature = "vox")]
+pub use vox::load_vox_slice;
 
 use crate::core::MeshInput;
 use crate::error::VoxelizerError;
 use glam::Mat4;
+
+/// One parsed `.vox` model in engine (Y-up) voxel space, its colours resolved
+/// into a [`MaterialTable`](voxel_core::MaterialTable) — natural for that
+/// format's ≤255-colour palette, and shaped for
+/// [`SparseTree::from_voxels`](voxel_core::SparseTree::from_voxels).
+#[derive(Debug)]
+pub struct VoxModel {
+    /// Occupied voxels as `(coord, global_id)`, coords in `[0, dims)` per axis.
+    pub voxels: Vec<([u32; 3], u16)>,
+    /// The file's colours behind the magenta id-0 sentinel.
+    pub table: voxel_core::MaterialTable,
+    /// Engine-space extents of the model content.
+    pub dims: [u32; 3],
+    /// Total models in the file. `.vox` loads only the first (scene-graph
+    /// transforms are out of scope).
+    pub models_total: usize,
+}
+
+/// A parsed `.cvox` file in engine (Y-up) voxel space, colours kept **raw**:
+/// the format has no colour ceiling, and a truecolor export legitimately
+/// carries far more distinct colours than any palette representation
+/// (`MaterialTable`'s 65535 ids, the GPU's 16-per-leaf inline palette) can
+/// hold. Parsing is this adapter's job; choosing palette-vs-truecolor
+/// representation is the consumer's — this DTO stays policy-free.
+#[derive(Debug)]
+pub struct CvoxModel {
+    /// Occupied voxels as `(coord, RGBA8-LE colour)`, coords in `[0, dims)`
+    /// per axis. Repeated coords are possible (overlapping models); consumers
+    /// keep the last occurrence, matching `SparseTree::from_voxels`.
+    pub voxels: Vec<([u32; 3], u32)>,
+    /// Engine-space extents of the merged content.
+    pub dims: [u32; 3],
+    /// Total models in the file (all merged — translations are plain offsets).
+    pub models_total: usize,
+}
 
 /// Builds a corrective rotation from per-axis angles in **degrees**.
 ///

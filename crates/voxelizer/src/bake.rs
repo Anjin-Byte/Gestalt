@@ -27,29 +27,115 @@
 
 use crate::appearance::{Texture, WrapMode};
 use glam::{Vec2, Vec3};
+use std::sync::LazyLock;
 
-/// sRGB → linear for one 0..=255 channel byte.
+/// sRGB → linear, one table entry per byte. Table-ified (from the same pinned
+/// formula) for two reasons: it removes a `powf` from every bilinear tap, and
+/// the GPU bake can upload these exact 256 words and decode **bit-identically**
+/// to the CPU oracle.
+static SRGB_DECODE: LazyLock<[f32; 256]> = LazyLock::new(|| {
+    let mut table = [0.0f32; 256];
+    for (b, out) in table.iter_mut().enumerate() {
+        #[allow(clippy::cast_precision_loss)] // b <= 255
+        let c = b as f32 / 255.0;
+        *out = if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        };
+    }
+    table
+});
+
+/// The linear-space decision boundaries between consecutive sRGB bytes:
+/// `bounds[i]` is the **smallest `f32`** the closed-form `powf` encode maps to
+/// byte `i + 1`, found by bit-level bisection of the closed form itself — so
+/// the table search reproduces the closed form for *every* input by
+/// construction (an analytic midpoint table differs on razor-edge ULPs; the
+/// sweep test caught one at 1-in-100k). Encoding stays a monotonic table
+/// search — the same search, over the same uploaded words, on the GPU.
+static SRGB_ENCODE_BOUNDS: LazyLock<[f32; 255]> = LazyLock::new(|| {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn closed_form(c: f32) -> u8 {
+        let s = if c <= 0.003_130_8 {
+            c * 12.92
+        } else {
+            1.055 * c.powf(1.0 / 2.4) - 0.055
+        };
+        (s * 255.0 + 0.5) as u8
+    }
+    let mut bounds = [0.0f32; 255];
+    for (i, out) in bounds.iter_mut().enumerate() {
+        #[allow(clippy::cast_possible_truncation)] // i + 1 <= 255
+        let target = (i + 1) as u8;
+        // Positive f32s order like their bit patterns: bisect the bits of
+        // [0.0, 1.0] for the first value the closed form maps to `target`.
+        let (mut lo, mut hi) = (0.0f32.to_bits(), 1.0f32.to_bits());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if closed_form(f32::from_bits(mid)) >= target {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        *out = f32::from_bits(lo);
+    }
+    bounds
+});
+
+/// sRGB → linear for one 0..=255 channel byte (table lookup).
 #[must_use]
 fn srgb_to_linear(b: u8) -> f32 {
-    let c = f32::from(b) / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
+    SRGB_DECODE[usize::from(b)]
 }
 
-/// linear → sRGB → 0..=255 byte (round-to-nearest).
+/// The decode table, for GPU upload (the kernel reads these exact words).
 #[must_use]
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub(crate) fn srgb_decode_table() -> &'static [f32; 256] {
+    &SRGB_DECODE
+}
+
+/// The encode boundaries, for GPU upload (the kernel searches these exact words).
+#[must_use]
+pub(crate) fn srgb_encode_bounds() -> &'static [f32; 255] {
+    &SRGB_ENCODE_BOUNDS
+}
+
+/// linear → sRGB 0..=255 byte, round-to-nearest — expressed as the count of
+/// [`SRGB_ENCODE_BOUNDS`] boundaries at or below `c`, which is exactly the
+/// byte the closed-form `powf` round produced.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)] // partition_point over 255 entries
 fn linear_to_srgb_u8(c: f32) -> u8 {
     let c = c.clamp(0.0, 1.0);
-    let s = if c <= 0.003_130_8 {
-        c * 12.92
-    } else {
-        1.055 * c.powf(1.0 / 2.4) - 0.055
-    };
-    (s * 255.0 + 0.5) as u8
+    SRGB_ENCODE_BOUNDS.partition_point(|&bound| bound <= c) as u8
+}
+
+/// A read-only RGBA8 texel grid — the one abstraction the pinned sampling
+/// algorithm reads through. The decoded [`Texture`] and the GPU-upload packed
+/// representation both implement it, so the oracle and the packed reference
+/// run the *same* code (no transcription drift); the WGSL kernel transcribes
+/// this single canonical implementation.
+pub trait TexelSource {
+    /// Texture width in texels.
+    fn width(&self) -> u32;
+    /// Texture height in texels.
+    fn height(&self) -> u32;
+    /// The RGBA8 texel at `(x, y)` (in-range by the caller's wrap step).
+    fn texel(&self, x: u32, y: u32) -> [u8; 4];
+}
+
+impl TexelSource for Texture {
+    fn width(&self) -> u32 {
+        Texture::width(self)
+    }
+    fn height(&self) -> u32 {
+        Texture::height(self)
+    }
+    fn texel(&self, x: u32, y: u32) -> [u8; 4] {
+        self.rgba()[(y as usize) * (Texture::width(self) as usize) + (x as usize)]
+    }
 }
 
 /// Wraps one UV coordinate into a samplable range per the mode.
@@ -80,7 +166,12 @@ fn wrap_texel(i: i64, dim: u32, mode: WrapMode) -> u32 {
     clippy::cast_sign_loss,
     clippy::cast_precision_loss
 )]
-fn sample_bilinear_linear(tex: &Texture, uv: Vec2, wrap_s: WrapMode, wrap_t: WrapMode) -> [f32; 4] {
+fn sample_bilinear_linear<S: TexelSource + ?Sized>(
+    tex: &S,
+    uv: Vec2,
+    wrap_s: WrapMode,
+    wrap_t: WrapMode,
+) -> [f32; 4] {
     let u = wrap(uv.x, wrap_s);
     let v = wrap(uv.y, wrap_t);
     // Texel-centre convention: texel centre i maps to (i+0.5)/dim.
@@ -96,7 +187,7 @@ fn sample_bilinear_linear(tex: &Texture, uv: Vec2, wrap_s: WrapMode, wrap_t: Wra
     let tap = |xi: i64, yi: i64| -> [f32; 4] {
         let x = wrap_texel(xi, tex.width(), wrap_s);
         let y = wrap_texel(yi, tex.height(), wrap_t);
-        let t = tex.rgba()[(y as usize) * (tex.width() as usize) + (x as usize)];
+        let t = tex.texel(x, y);
         [
             srgb_to_linear(t[0]),
             srgb_to_linear(t[1]),
@@ -210,11 +301,11 @@ fn encode_color(linear: [f32; 4], factor: [f32; 4]) -> [u8; 4] {
 ///
 /// Byte order is `[R, G, B, A]` (R low), matching the renderer's `unpack4x8unorm`.
 #[must_use]
-pub fn expected_color(
+pub fn expected_color<S: TexelSource + ?Sized>(
     centre: Vec3,
     tri: [Vec3; 3],
     uvs: [Vec2; 3],
-    texture: Option<&Texture>,
+    texture: Option<&S>,
     wrap: (WrapMode, WrapMode),
     factor: [f32; 4],
 ) -> [u8; 4] {
@@ -260,11 +351,11 @@ fn clamp_bary(u: f32, v: f32, w: f32) -> (f32, f32, f32) {
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
-pub fn expected_color_filtered(
+pub fn expected_color_filtered<S: TexelSource + ?Sized>(
     centre: Vec3,
     tri: [Vec3; 3],
     uvs: [Vec2; 3],
-    texture: Option<&Texture>,
+    texture: Option<&S>,
     wrap: (WrapMode, WrapMode),
     factor: [f32; 4],
 ) -> [u8; 4] {
@@ -337,8 +428,9 @@ pub fn expected_color_filtered(
 /// chosen *independently* of the occupancy owner (`docs/materials/11`, D2): at
 /// 2048³ most occupied voxels are multi-covered, and the occupancy min-index
 /// triangle is usually not the surface in the cell.
-#[derive(Debug, Clone, Copy)]
-pub struct ColorCandidate<'a> {
+// Manual Clone/Copy: the derive would bound `S: Copy`, but only the *reference*
+// is held — candidates are copyable for any texel source.
+pub struct ColorCandidate<'a, S: TexelSource + ?Sized = Texture> {
     /// Global triangle index — the min-index tie-break key for equal distances.
     pub tri_index: usize,
     /// World-space triangle vertices.
@@ -346,11 +438,75 @@ pub struct ColorCandidate<'a> {
     /// Per-vertex base-colour UVs.
     pub uvs: [Vec2; 3],
     /// The material's base-colour texture (`None` = flat factor).
-    pub texture: Option<&'a Texture>,
+    pub texture: Option<&'a S>,
     /// `(wrap_s, wrap_t)` sampler modes.
     pub wrap: (WrapMode, WrapMode),
     /// The material's linear `base_color_factor`.
     pub factor: [f32; 4],
+}
+
+impl<S: TexelSource + ?Sized> Clone for ColorCandidate<'_, S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<S: TexelSource + ?Sized> Copy for ColorCandidate<'_, S> {}
+
+impl<S: TexelSource + ?Sized> std::fmt::Debug for ColorCandidate<'_, S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ColorCandidate")
+            .field("tri_index", &self.tri_index)
+            .field("verts", &self.verts)
+            .field("has_texture", &self.texture.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// [`bake_nearest_owner`] over an index subset with a conservative per-candidate
+/// early-out — the production fast path. `geom[i]` is candidate `i`'s
+/// `(centroid, bounding radius)` in the same space as `centre`; a candidate whose
+/// distance lower bound `|centre − centroid| − radius` strictly exceeds the best
+/// hit so far cannot win **or tie**, so skipping it preserves the naive argmin's
+/// result exactly (including the min-`tri_index` tie rule) — pinned by the
+/// `bounded_matches_naive_*` differential tests, which are also the harness the
+/// future GPU bake diffs against.
+#[must_use]
+pub fn bake_nearest_owner_bounded<S: TexelSource + ?Sized>(
+    centre: Vec3,
+    candidates: &[ColorCandidate<'_, S>],
+    geom: &[(Vec3, f32)],
+    indices: &[u32],
+) -> Option<(usize, [u8; 4])> {
+    let mut best: Option<(f32, usize, usize)> = None; // (dist2, tri_index, cand idx)
+    for &raw in indices {
+        let i = raw as usize;
+        let c = &candidates[i];
+        if let Some((bd, bi, _)) = best {
+            let (centroid, radius) = geom[i];
+            let lower = (centre - centroid).length() - radius;
+            if lower > 0.0 && lower * lower > bd {
+                continue; // cannot beat or tie the current best
+            }
+            let p = closest_point_on_triangle(centre, c.verts[0], c.verts[1], c.verts[2]);
+            let dist2 = (p - centre).length_squared();
+            // The exact `==` tie is deliberate — identical semantics to
+            // `bake_nearest_owner` (coincident duplicated triangles).
+            #[allow(clippy::float_cmp)]
+            if dist2 < bd || (dist2 == bd && c.tri_index < bi) {
+                best = Some((dist2, c.tri_index, i));
+            }
+        } else {
+            let p = closest_point_on_triangle(centre, c.verts[0], c.verts[1], c.verts[2]);
+            best = Some(((p - centre).length_squared(), c.tri_index, i));
+        }
+    }
+    best.map(|(_, _, i)| {
+        let c = &candidates[i];
+        (
+            i,
+            expected_color_filtered(centre, c.verts, c.uvs, c.texture, c.wrap, c.factor),
+        )
+    })
 }
 
 /// Picks the **nearest-surface** colour owner among `candidates` (argmin squared
@@ -372,7 +528,10 @@ pub fn bake_nearest_color(centre: Vec3, candidates: &[ColorCandidate]) -> Option
 /// `None` only when `candidates` is empty.
 #[must_use]
 #[allow(clippy::float_cmp)]
-pub fn bake_nearest_owner(centre: Vec3, candidates: &[ColorCandidate]) -> Option<(usize, [u8; 4])> {
+pub fn bake_nearest_owner<S: TexelSource + ?Sized>(
+    centre: Vec3,
+    candidates: &[ColorCandidate<'_, S>],
+) -> Option<(usize, [u8; 4])> {
     let mut best: Option<(f32, usize, usize)> = None; // (dist2, tri_index, candidate idx)
     for (i, c) in candidates.iter().enumerate() {
         let p = closest_point_on_triangle(centre, c.verts[0], c.verts[1], c.verts[2]);
@@ -469,6 +628,119 @@ mod tests {
         assert!((u + v + w - 1.0).abs() < 1e-5);
     }
 
+    /// The table-search encode must reproduce the closed-form `powf` round
+    /// for every byte round-trip and across a dense sweep of linear values —
+    /// the tables are what the GPU bake will upload, so this equality is the
+    /// CPU↔GPU bit-exactness foundation.
+    #[test]
+    fn srgb_tables_match_the_closed_form() {
+        #[allow(clippy::cast_possible_truncation)]
+        fn closed_form(c: f32) -> u8 {
+            let c = c.clamp(0.0, 1.0);
+            let s = if c <= 0.003_130_8 {
+                c * 12.92
+            } else {
+                1.055 * c.powf(1.0 / 2.4) - 0.055
+            };
+            (s * 255.0 + 0.5) as u8
+        }
+        // Every byte round-trips exactly.
+        for b in 0..=255u8 {
+            let via_table = linear_to_srgb_u8(srgb_to_linear(b));
+            assert_eq!(via_table, b, "byte {b} failed the round trip");
+        }
+        // Dense sweep of the linear domain.
+        #[allow(clippy::cast_precision_loss)]
+        for i in 0..=100_000u32 {
+            let c = i as f32 / 100_000.0;
+            assert_eq!(
+                linear_to_srgb_u8(c),
+                closed_form(c),
+                "linear {c} encodes differently"
+            );
+        }
+    }
+
+    /// The bounded fast path must equal the naive argmin — owner index and
+    /// baked colour — on adversarial candidate clouds. This is the differential
+    /// harness the GPU bake will reuse: any future implementation diffs
+    /// against `bake_nearest_owner` through exactly this comparison.
+    #[test]
+    fn bounded_matches_naive_on_candidate_clouds() {
+        fn splitmix(state: &mut u64) -> u64 {
+            *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = *state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+        #[allow(clippy::cast_precision_loss)]
+        fn unit(state: &mut u64) -> f32 {
+            (splitmix(state) >> 40) as f32 / (1u64 << 24) as f32
+        }
+
+        let mut state = 0xC0FF_EE00u64;
+        for trial in 0..64 {
+            let count = 1 + (splitmix(&mut state) % 96) as usize;
+            let mut candidates = Vec::with_capacity(count);
+            let mut geom = Vec::with_capacity(count);
+            for i in 0..count {
+                let base = Vec3::new(
+                    unit(&mut state) * 16.0,
+                    unit(&mut state) * 16.0,
+                    unit(&mut state) * 16.0,
+                );
+                let verts = [
+                    base,
+                    base + Vec3::new(unit(&mut state) * 4.0, unit(&mut state) * 4.0, 0.0),
+                    base + Vec3::new(0.0, unit(&mut state) * 4.0, unit(&mut state) * 4.0),
+                ];
+                // Duplicate some triangles exactly to exercise the tie rule.
+                let verts = if i % 7 == 3 && !candidates.is_empty() {
+                    let prev: &ColorCandidate = &candidates[i - 1];
+                    prev.verts
+                } else {
+                    verts
+                };
+                let centroid = (verts[0] + verts[1] + verts[2]) / 3.0;
+                let radius = verts
+                    .iter()
+                    .map(|&v| (v - centroid).length())
+                    .fold(0.0f32, f32::max);
+                candidates.push(ColorCandidate {
+                    tri_index: i,
+                    verts,
+                    uvs: [Vec2::ZERO; 3],
+                    texture: None,
+                    wrap: (WrapMode::ClampToEdge, WrapMode::ClampToEdge),
+                    factor: [unit(&mut state), 0.5, 0.5, 1.0],
+                });
+                geom.push((centroid, radius));
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let indices: Vec<u32> = (0..count as u32).collect();
+            let centre = Vec3::new(
+                unit(&mut state) * 20.0,
+                unit(&mut state) * 20.0,
+                unit(&mut state) * 20.0,
+            );
+
+            let naive = bake_nearest_owner(centre, &candidates);
+            let fast = bake_nearest_owner_bounded(centre, &candidates, &geom, &indices);
+            match (naive, fast) {
+                (None, None) => {}
+                (Some((ni, ncolor)), Some((fi, fcolor))) => {
+                    assert_eq!(
+                        candidates[ni].tri_index, candidates[fi].tri_index,
+                        "trial {trial}: owner diverged"
+                    );
+                    assert_eq!(ncolor, fcolor, "trial {trial}: colour diverged");
+                }
+                other => panic!("trial {trial}: presence diverged: {other:?}"),
+            }
+        }
+    }
+
     #[test]
     fn samples_texel_centres_exactly() {
         let tex = checker();
@@ -553,7 +825,7 @@ mod tests {
             Vec3::ZERO,
             flat_tri().0,
             flat_tri().1,
-            None,
+            None::<&Texture>,
             CLAMP,
             [0.5, 0.5, 0.5, 1.0],
         );

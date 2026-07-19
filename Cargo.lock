@@ -418,6 +418,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -516,6 +526,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
+]
+
+[[package]]
+name = "dot_vox"
+version = "5.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f160bf661e495a80ec98ac88a6535f5c80c02d2271c7013af70fe9ec670ccbff"
+dependencies = [
+ "ahash",
+ "lazy_static",
+ "log",
+ "nom",
 ]
 
 [[package]]
@@ -629,6 +651,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
+name = "futures-channel"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
+dependencies = [
+ "futures-core",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -669,9 +700,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1178,6 +1211,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "nom"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -1971,6 +2013,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2396,6 +2449,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "voxel-brush"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "voxel-core",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "voxel-camera"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "voxel-core",
+]
+
+[[package]]
 name = "voxel-cli"
 version = "0.1.0"
 dependencies = [
@@ -2425,6 +2495,7 @@ name = "voxel-gpu"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "futures-channel",
  "glam",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
@@ -2445,6 +2516,7 @@ dependencies = [
  "font8x8",
  "glam",
  "pollster",
+ "voxel-camera",
  "voxel-core",
  "voxel-gpu",
  "voxelizer",
@@ -2453,10 +2525,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxel-web"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "glam",
+ "js-sys",
+ "pollster",
+ "serde",
+ "serde-wasm-bindgen",
+ "thiserror 2.0.18",
+ "voxel-brush",
+ "voxel-camera",
+ "voxel-core",
+ "voxel-gpu",
+ "voxelizer",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
 name = "voxelizer"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "dot_vox",
+ "futures-channel",
+ "getrandom 0.3.4",
  "glam",
  "gltf",
  "image",

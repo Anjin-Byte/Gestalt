@@ -15,10 +15,18 @@ publish = false
 # the heavy parsing dependencies are droppable via `--no-default-features` (the
 # `loader` module gates out entirely). Each format gates its own optional dep,
 # so `--features obj` (no glTF) and vice versa both compile independently.
-default = ["gltf", "obj", "stl"]
+default = ["gltf", "obj", "stl", "vox", "cvox"]
 gltf = ["dep:gltf"]
 obj = ["dep:tobj", "dep:image"]
 stl = ["dep:stl_io"]
+# MagicaVoxel .vox: unlike the mesh formats this is voxel-native IO — import
+# maps straight to `SparseTree::from_voxels` (no voxelization pass), and it is
+# the first implemented output adapter (io/export).
+vox = ["dep:dot_vox"]
+# Compressed voxel .cvox (github.com/JelleBouma/cvox): .vox's compressed
+# sibling — unlimited colours, >256³ via multi-model translations. Hand-rolled
+# adapters, no dependency.
+cvox = []
 
 # The example loads a textured mesh via `load_mesh`/`rotation_degrees`, which are
 # gated behind the loader features. Without this, `--no-default-features
@@ -39,11 +47,21 @@ gltf = { workspace = true, optional = true }
 tobj = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
 stl_io = { workspace = true, optional = true }
+# Oneshot future for the GPU readback helpers (gpu/buffers.rs): the map result
+# must be awaitable so the same code runs natively (pollster) and on wasm32
+# (browser-driven).
+futures-channel = { workspace = true }
+# MagicaVoxel .vox parser and writer (io/import/vox.rs, io/export/vox.rs).
+# Crate-local: single consumer.
+dot_vox = { version = "5.2", optional = true }
 
 # Browser console logging for the wasm32 debug path (csr.rs). Native/macOS builds
 # do not pull this in.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["console"] }
+# Not used directly: opts the transitive tobj→ahash→getrandom edge into the
+# browser-crypto backend (pairs with the cfg in .cargo/config.toml).
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 proptest = { workspace = true }

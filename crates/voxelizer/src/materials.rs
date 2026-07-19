@@ -150,15 +150,21 @@ pub fn material_table_for_sparse(
 /// non-zero value means geometry fell outside the fitted grid and the caller
 /// should surface it.
 #[must_use]
-pub fn tree_from_compact(resolution: Resolution, voxels: &[CompactVoxel]) -> (SparseTree, usize) {
+pub fn tree_from_compact(
+    resolution: Resolution,
+    voxels: &[CompactVoxel],
+    progress: &mut voxel_core::Progress<'_>,
+) -> (SparseTree, usize) {
     let n = i64::from(resolution.voxels_per_axis());
     let mut dropped = 0usize;
+    let mut meter = progress.meter(voxels.len() as u64);
     // Stream `(coord, gid)` straight into `from_voxels` — no intermediate `pairs`
     // Vec, so the only large allocation is `from_voxels`'s per-brick map (the
     // input `voxels` slice is the caller's). `dropped` is updated as the iterator
     // drains, then read once the borrow ends.
     let tree = {
         let pairs = voxels.iter().filter_map(|v| {
+            meter.add(1);
             let (x, y, z) = (i64::from(v.vx), i64::from(v.vy), i64::from(v.vz));
             if x < 0 || y < 0 || z < 0 || x >= n || y >= n || z >= n {
                 dropped += 1;
@@ -301,7 +307,7 @@ mod tests {
                 material: 9,
             }, // >= n → drop
         ];
-        let (tree, dropped) = tree_from_compact(r, &voxels);
+        let (tree, dropped) = tree_from_compact(r, &voxels, &mut voxel_core::Progress::none());
         assert_eq!(dropped, 3, "negative + 2 over-range coords dropped");
         assert!(tree.is_occupied(VoxelCoord::new(0, 0, 0)));
         assert!(tree.is_occupied(VoxelCoord::new(5, 5, 5)));
@@ -319,7 +325,7 @@ mod tests {
             vz: 3,
             material: 0xFFFF_0005,
         }];
-        let (tree, dropped) = tree_from_compact(r, &voxels);
+        let (tree, dropped) = tree_from_compact(r, &voxels, &mut voxel_core::Progress::none());
         assert_eq!(dropped, 0);
         assert_eq!(tree.material_at(VoxelCoord::new(1, 2, 3)), 5);
     }

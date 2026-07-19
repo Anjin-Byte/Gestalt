@@ -336,7 +336,9 @@ fn time_class_costs(tree: &SparseTree, n: u32, edits: u32, state: &mut u64) -> C
                 topo.1 += 1;
             }
             Edit::Unchanged => {}
-            Edit::Material { .. } => unreachable!("set_voxel never returns Material"), // occupancy edits only — set_voxel never spills materials
+            // occupancy edits only — set_voxel never spills materials or recolours
+            Edit::Material { .. } => unreachable!("set_voxel never returns Material"),
+            Edit::Color { .. } => unreachable!("set_voxel never returns Color"),
         }
     }
     let (leaf_s, leaf_batch) = time_leaf_batch(tree.clone(), n, edits.max(50_000), state);
@@ -446,7 +448,9 @@ fn time_brush_stamps(
                     any_topo = true;
                 }
                 Edit::Unchanged => {}
-                Edit::Material { .. } => unreachable!("set_voxel never returns Material"), // occupancy edits only
+                // occupancy edits only
+                Edit::Material { .. } => unreachable!("set_voxel never returns Material"),
+                Edit::Color { .. } => unreachable!("set_voxel never returns Color"),
             }
         }
         s.total += t.elapsed();

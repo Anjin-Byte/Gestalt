@@ -1,0 +1,1269 @@
+/* Material shell around a fullscreen canvas.
+ *
+ * The system: milky surfaces with mass — high-opacity panels over heavy blur,
+ * every element lit from above (inner top highlight + soft layered drop
+ * shadow), interactables raised like clay (pressed = inset). Two themes from
+ * one token set: dark is a milky GitHub-dimmed blue-gray, light a creamy
+ * off-white; the accent stays the product's warm amber (matching the native
+ * viewer) in both. Composition rules: one panel width everywhere, one 16px
+ * edge inset, one stack rhythm inside panels (spacing owned by the container,
+ * never by elements), settings as rows (label left, control right). */
+
+/* ---- Colour tokens ------------------------------------------------------
+ *
+ * A two-layer token architecture: each theme hand-authors only SEED
+ * primitives — the ground, an ink pole, a paper pole, the accent — and every
+ * semantic tone is DERIVED from them in OKLab (`color-mix(in oklab, …)`), a
+ * perceptually uniform Lab-family space. Because contrast is a pure function
+ * of lightness difference in such a space, fixed mix ratios give predictable
+ * readability in both themes (the Material-You / APCA tonal principle):
+ * text ≈ 82 % toward the ink pole (comfortably past 4.5:1), dim ≈ 55 %
+ * (secondary, ~3:1+), bright ≈ 96 %. Mixing *with the ground* keeps every
+ * tone hue-harmonized — coloured neutrals, never generic gray. Change a
+ * seed and the whole scale follows. */
+
+:root {
+  /* Seeds — dark: a milky GitHub-dimmed blue-gray. */
+  --ground: oklch(27% 0.015 250);
+  --ink: oklch(93% 0.01 250);
+  --paper: oklch(99% 0.002 250);
+  /* The accent's two roles (the Material-3 tonal split): ink = accent as
+     text/icon/outline, fill = accent as surface under --on-accent text. The
+     concrete tones come from the selected accent's per-theme seeds (the
+     `data-accent` blocks below) — the settings panel swaps one attribute and
+     everything downstream re-derives. */
+  --accent-ink: var(--acc-dark-ink);
+  --accent-fill: var(--acc-dark-fill);
+  --danger: oklch(74% 0.13 32);
+
+  /* Derived text scale (the Lab-space derivation). */
+  --text: color-mix(in oklab, var(--ink) 82%, var(--ground));
+  --dim: color-mix(in oklab, var(--ink) 55%, var(--ground));
+  --bright: color-mix(in oklab, var(--ink) 96%, var(--ground));
+  --on-accent: color-mix(in oklab, black 76%, var(--accent-fill));
+
+  /* Derived surfaces: elevation mixes toward paper; translucency via a
+     transparent mix (the milk). Edges/dividers/wells mix toward ink, so
+     they flip direction with the theme automatically. */
+  --elev: color-mix(in oklab, var(--ground) 86%, var(--paper));
+  --bg: var(--ground);
+  --surface: color-mix(in oklab, var(--elev) 91%, transparent);
+  --raised: color-mix(in oklab, var(--paper) 6%, transparent);
+  /* The chip material: a top-lit convex gradient (clay has mass). Hover
+     brightens these stops — the surface, never the ink. */
+  --chip-top: color-mix(in oklab, var(--paper) 11%, transparent);
+  --chip-bottom: color-mix(in oklab, var(--paper) 4%, transparent);
+  --chip-top-hover: color-mix(in oklab, var(--paper) 17%, transparent);
+  --chip-bottom-hover: color-mix(in oklab, var(--paper) 8%, transparent);
+  --well: color-mix(in oklab, black 36%, transparent);
+  --edge: color-mix(in oklab, var(--ink) 9%, transparent);
+  --edge-strong: color-mix(in oklab, var(--ink) 18%, transparent);
+  --divider: color-mix(in oklab, var(--ink) 7%, transparent);
+  --accent-soft: color-mix(in oklab, var(--accent-fill) 13%, transparent);
+  --accent-edge: color-mix(in oklab, var(--accent-fill) 38%, transparent);
+  --knob: color-mix(in oklab, var(--paper) 94%, var(--ground));
+
+  /* The renderer's sky endpoints (resolved live by the shell, sent to the
+     GPU as the canvas background): a barely-there vertical ramp derived from
+     the same seeds — the render background follows the stylesheet. Dithered
+     on the GPU, so the subtle ramp never bands. */
+  --sky-top: color-mix(in oklab, var(--ground) 86%, var(--paper));
+  --sky-bottom: color-mix(in oklab, var(--ground) 88%, black);
+
+  /* Physical constants (shadow + top-light), themed by weight not colour. */
+  --shadow-island: 0 18px 44px rgba(6, 10, 16, 0.45), 0 2px 8px rgba(6, 10, 16, 0.3);
+  --shadow-raise: 0 1px 2px rgba(6, 10, 16, 0.35);
+  --hi: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+}
+
+/* ---- Accent palettes (the settings picker) ------------------------------
+   Each accent is four seed tones — dark ink/fill, light ink/fill — derived
+   by the same rules (dark: restrained chroma, ΔL ≈ 60 vs ground; light ink:
+   ΔL ≈ 40 vs cream; light fill: light + rich under dark text). Amber is the
+   default (brand continuity with the native viewer; complementary on the
+   dark ground, role-split on cream). Teal/orchid/mint sit in the corridors
+   orthogonal to BOTH grounds; violet complements cream but blends on dark.
+   Coral is deliberately absent — it sits on --danger's hue. */
+
+:root {
+  --acc-dark-ink: oklch(87% 0.105 85); /* amber (default) */
+  --acc-dark-fill: oklch(87% 0.105 85);
+  --acc-light-ink: oklch(58% 0.13 72);
+  --acc-light-fill: oklch(84% 0.105 80);
+}
+
+:root[data-accent="teal"] {
+  --acc-dark-ink: oklch(85% 0.1 195);
+  --acc-dark-fill: oklch(85% 0.1 195);
+  --acc-light-ink: oklch(48% 0.1 200);
+  --acc-light-fill: oklch(84% 0.09 195);
+}
+
+:root[data-accent="orchid"] {
+  --acc-dark-ink: oklch(83% 0.11 340);
+  --acc-dark-fill: oklch(83% 0.11 340);
+  --acc-light-ink: oklch(54% 0.16 340);
+  --acc-light-fill: oklch(84% 0.095 340);
+}
+
+:root[data-accent="mint"] {
+  --acc-dark-ink: oklch(86% 0.1 160);
+  --acc-dark-fill: oklch(86% 0.1 160);
+  --acc-light-ink: oklch(52% 0.11 165);
+  --acc-light-fill: oklch(85% 0.09 160);
+}
+
+:root[data-accent="violet"] {
+  --acc-dark-ink: oklch(84% 0.1 295);
+  --acc-dark-fill: oklch(84% 0.1 295);
+  --acc-light-ink: oklch(52% 0.14 295);
+  --acc-light-fill: oklch(83% 0.09 295);
+}
+
+/* The in-app override (persisted): `data-theme` on the root wins over the
+   OS preference, in both directions — the same seed blocks, re-asserted. */
+:root[data-theme="light"] {
+    --ground: oklch(95.5% 0.018 85);
+    --ink: oklch(30% 0.022 70);
+    --paper: oklch(99.5% 0.008 90);
+    --accent-ink: var(--acc-light-ink);
+    --accent-fill: var(--acc-light-fill);
+    --danger: oklch(55% 0.17 32);
+
+    --raised: color-mix(in oklab, var(--paper) 70%, transparent);
+    --chip-top: color-mix(in oklab, var(--paper) 92%, transparent);
+    --chip-bottom: color-mix(in oklab, var(--paper) 55%, transparent);
+    --chip-top-hover: color-mix(in oklab, var(--paper) 100%, transparent);
+    --chip-bottom-hover: color-mix(in oklab, var(--paper) 72%, transparent);
+    --well: color-mix(in oklab, var(--ink) 9%, transparent);
+    --on-accent: color-mix(in oklab, black 82%, var(--accent-fill));
+
+    --shadow-island: 0 16px 36px rgba(120, 105, 80, 0.28), 0 2px 6px rgba(120, 105, 80, 0.18);
+    --shadow-raise: 0 1px 2px rgba(120, 105, 80, 0.25);
+    --hi: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+:root[data-theme="dark"] {
+    --ground: oklch(27% 0.015 250);
+    --ink: oklch(93% 0.01 250);
+    --paper: oklch(99% 0.002 250);
+    --accent-ink: var(--acc-dark-ink);
+    --accent-fill: var(--acc-dark-fill);
+    --danger: oklch(74% 0.13 32);
+
+    --raised: color-mix(in oklab, var(--paper) 6%, transparent);
+    --chip-top: color-mix(in oklab, var(--paper) 11%, transparent);
+    --chip-bottom: color-mix(in oklab, var(--paper) 4%, transparent);
+    --chip-top-hover: color-mix(in oklab, var(--paper) 17%, transparent);
+    --chip-bottom-hover: color-mix(in oklab, var(--paper) 8%, transparent);
+    --well: color-mix(in oklab, black 36%, transparent);
+    --on-accent: color-mix(in oklab, black 76%, var(--accent-fill));
+
+    --shadow-island: 0 18px 44px rgba(6, 10, 16, 0.45), 0 2px 8px rgba(6, 10, 16, 0.3);
+    --shadow-raise: 0 1px 2px rgba(6, 10, 16, 0.35);
+    --hi: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+/* The theme toggle shows the mode you would switch TO. */
+.icon-moon {
+  display: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .icon-sun {
+    display: none;
+  }
+
+  :root:not([data-theme]) .icon-moon {
+    display: block;
+  }
+}
+
+:root[data-theme="light"] .icon-sun {
+  display: none;
+}
+
+:root[data-theme="light"] .icon-moon {
+  display: block;
+}
+
+:root[data-theme="dark"] .icon-sun {
+  display: block;
+}
+
+:root[data-theme="dark"] .icon-moon {
+  display: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* Seeds — light: a warm off-white; ink is a warm near-black so the whole
+       derived scale stays creamy, never cold gray. The accent deepens for
+       contrast on cream. Everything else re-derives itself. */
+    --ground: oklch(95.5% 0.018 85);
+    --ink: oklch(30% 0.022 70);
+    --paper: oklch(99.5% 0.008 90);
+    --accent-ink: var(--acc-light-ink);
+    --accent-fill: var(--acc-light-fill);
+    --danger: oklch(55% 0.17 32);
+
+    --raised: color-mix(in oklab, var(--paper) 70%, transparent);
+    --chip-top: color-mix(in oklab, var(--paper) 92%, transparent);
+    --chip-bottom: color-mix(in oklab, var(--paper) 55%, transparent);
+    --chip-top-hover: color-mix(in oklab, var(--paper) 100%, transparent);
+    --chip-bottom-hover: color-mix(in oklab, var(--paper) 72%, transparent);
+    --well: color-mix(in oklab, var(--ink) 9%, transparent);
+    --on-accent: color-mix(in oklab, black 82%, var(--accent-fill));
+
+    --shadow-island: 0 16px 36px rgba(120, 105, 80, 0.28), 0 2px 6px rgba(120, 105, 80, 0.18);
+    --shadow-raise: 0 1px 2px rgba(120, 105, 80, 0.25);
+    --hi: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The `hidden` attribute always wins — a display: flex/grid on a class must
+   never resurrect a hidden element (the re-voxelize prompt, folded panels). */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 var(--mono);
+}
+
+#view {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+
+#view.looking {
+  cursor: grabbing;
+}
+
+/* ---- The island stage --------------------------------------------------- */
+
+#ui {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.island {
+  pointer-events: auto;
+  background: var(--surface);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  box-shadow: var(--hi), var(--shadow-island);
+  user-select: none;
+}
+
+/* Docks: a corner cluster of uniform icon toggles; each open panel stacks in
+   the flow beneath its own button — the popover mental model, and no fixed
+   positions to collide when several panels are open. */
+.dock {
+  position: fixed;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.dock > * {
+  pointer-events: auto;
+}
+
+#dock-left {
+  left: 16px;
+  align-items: flex-start;
+}
+
+#dock-right {
+  right: 16px;
+  align-items: flex-end;
+}
+
+.dock-toggles {
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.dock-toggles > * {
+  pointer-events: auto;
+}
+
+/* The uniform toggle: a 36px clay square with a stroke icon; its state is its
+   panel's state (aria-expanded carries it, so style and semantics cannot
+   drift). */
+.dock-toggle {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 11px;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.dock-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.dock-toggle:hover {
+  color: var(--bright);
+}
+
+.dock-toggle[aria-expanded="true"] {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: var(--accent-edge);
+}
+
+/* Identity chip: wordmark + what is on the grid. */
+/* ---- Panels ------------------------------------------------------------- */
+
+/* One width everywhere: stacked panels form a clean column, edges align. */
+.panel {
+  width: 240px;
+  padding: 16px;
+}
+
+/* The stack rhythm: vertical space is owned by the panel, once — elements
+   carry no margins of their own. This is what "uncluttered" is made of. */
+.panel > * {
+  margin: 0;
+}
+
+.panel > * + * {
+  margin-top: 13px;
+}
+
+.island-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* ---- Settings rows: label left, control right, hairline dividers -------- */
+
+.rows {
+  display: block;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.row > span {
+  white-space: nowrap;
+}
+
+.rows .row + .row {
+  border-top: 1px solid var(--divider);
+}
+
+/* ---- Buttons: raised clay ----------------------------------------------- */
+
+button {
+  font: 11px var(--mono);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+}
+
+/* Tool + falloff grids: discrete clay chips with even gutters. Paint (the
+   colour tool) spans its row — a quiet emphasis. */
+.controls.tools,
+.controls.falloffs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+/* The shared chip voice — everything small-and-clickable (tools, falloffs,
+   history, exports) speaks one dialect: a top-lit convex gradient (clay has
+   mass), a 30px minimum target, 500-weight labels with a breath of tracking
+   (small-size legibility), a tactile press (clay gives underhand), and
+   selection rendered as *pressed-in* clay — the accent fill sits down where
+   idle chips sit up. */
+.tools .mode,
+.falloffs .mode,
+.history .mode,
+.export-row button {
+  font: 500 11.5px/1 var(--mono);
+  letter-spacing: 0.02em;
+  min-height: 30px;
+  color: var(--text);
+  background: linear-gradient(var(--chip-top), var(--chip-bottom));
+  border: 1px solid var(--edge);
+  cursor: pointer;
+  box-shadow: var(--hi), var(--shadow-raise);
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    filter 0.12s ease,
+    box-shadow 0.12s ease,
+    transform 0.12s ease;
+}
+
+.tools .mode:hover:not(:disabled, .active),
+.falloffs .mode:hover:not(:disabled, .active),
+.history .mode:hover:not(:disabled),
+.export-row button:hover:not(:disabled) {
+  color: var(--bright);
+  border-color: var(--edge-strong);
+  background: linear-gradient(var(--chip-top-hover), var(--chip-bottom-hover));
+}
+
+.tools .mode:active:not(:disabled),
+.falloffs .mode:active:not(:disabled),
+.history .mode:active:not(:disabled),
+.export-row button:active:not(:disabled) {
+  transform: translateY(0.5px);
+  box-shadow: inset 0 2px 3px color-mix(in oklab, black 22%, transparent);
+}
+
+.tools .mode,
+.falloffs .mode {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  padding: 0;
+}
+
+.tools .mode:last-child {
+  grid-column: 1 / -1;
+}
+
+.tools .mode.active,
+.falloffs .mode.active {
+  color: var(--on-accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  box-shadow: inset 0 1px 2px color-mix(in oklab, black 12%, transparent);
+}
+
+/* The hotkey badge as a mini keycap — teachable, not subliminal. */
+.tools .key {
+  font-size: 9px;
+  line-height: 1;
+  padding: 2.5px 4px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--ink) 7%, transparent);
+  color: var(--dim);
+}
+
+.tools .mode.active .key {
+  background: color-mix(in oklab, black 10%, transparent);
+  color: var(--on-accent);
+}
+
+/* The history pair: one clay bar, split down the middle (momentary — no
+   active state; depth shows in the label, "undo ×3"). */
+.controls.history {
+  gap: 0;
+  border-top: 1px solid var(--divider);
+  padding-top: 13px;
+}
+
+.history .mode {
+  flex: 1;
+  border-right-width: 0;
+}
+
+.history .mode:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.history .mode:last-child {
+  border-right-width: 1px;
+  border-radius: 0 8px 8px 0;
+}
+
+/* ---- Parameters: label + live value, then a clay slider ----------------- */
+
+.param {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 6px 8px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.param output {
+  color: var(--bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.param input[type="range"] {
+  grid-column: 1 / -1;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.param input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--well);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.param input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border: none;
+  border-radius: 50%;
+  background: var(--knob);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.param input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--well);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.param input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--knob);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* The colour row: the brush colour is a round swatch — the same vocabulary
+   as the settings accent swatches (a colour you can pick is a disc). The
+   native chrome is stripped; the swatch fills the disc edge-to-edge. */
+.swatch-row input[type="color"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: var(--hi), var(--shadow-raise);
+  transition: border-color 0.12s ease;
+}
+
+.swatch-row input[type="color"]:hover {
+  border-color: var(--edge-strong);
+}
+
+.swatch-row input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.swatch-row input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+  /* An inner hairline keeps a white swatch legible on the light theme. */
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 10%);
+}
+
+.swatch-row input[type="color"]::-moz-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+
+/* ---- Selects: recessed wells -------------------------------------------- */
+
+.row select {
+  max-width: 132px;
+  font: 11px var(--mono);
+  color: var(--bright);
+  background: var(--well);
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  padding: 5px 8px;
+  outline: none;
+  text-overflow: ellipsis;
+}
+
+/* ---- Switches: an inspector toggle looks like a toggle ------------------ */
+
+.check input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--well);
+  border: 1px solid var(--edge);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.check input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--knob);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease;
+}
+
+.check input:checked {
+  background: var(--accent-fill);
+  border-color: var(--accent-ink);
+}
+
+.check input:checked::after {
+  transform: translateX(12px);
+}
+
+.check {
+  cursor: pointer;
+}
+
+/* Disabled gating ("does not apply to this scene"): grey the whole row; the
+   label's `title` explains why. */
+select:disabled,
+input:disabled,
+.check:has(input:disabled) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---- Re-voxelize: always present, armed only by a staged change --------- */
+
+#revoxelize {
+  width: 100%;
+  min-height: 30px;
+  white-space: nowrap;
+  font: 500 11px var(--mono);
+  color: var(--dim);
+  background: linear-gradient(var(--chip-top), var(--chip-bottom));
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+#revoxelize:not(:disabled) {
+  color: var(--on-accent);
+  background: var(--accent-fill);
+  border-color: transparent;
+  box-shadow: var(--shadow-raise);
+}
+
+/* ---- IO: one primary verb, three parallel exports ----------------------- */
+
+.io-primary {
+  width: 100%;
+  font: 500 12px/1 var(--mono);
+  letter-spacing: 0.02em;
+  min-height: 32px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-edge);
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: var(--hi), var(--shadow-raise);
+  transition:
+    border-color 0.12s ease,
+    filter 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.io-primary:hover:not(:disabled) {
+  border-color: var(--accent-ink);
+  background: color-mix(in oklab, var(--accent-fill) 19%, transparent);
+}
+
+.io-primary:active:not(:disabled) {
+  box-shadow: inset 0 2px 3px color-mix(in oklab, black 18%, transparent);
+}
+
+.micro-label {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 6px;
+}
+
+.export-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.export-row button {
+  border-radius: 8px;
+}
+
+/* ---- Camera: a persistent mode pill, bottom-right ----------------------- */
+
+.camera-dock {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 68px;
+  padding: 5px;
+}
+
+.camera-dock .mode {
+  font: 500 10.5px/1.4 var(--mono);
+  letter-spacing: 0.02em;
+  color: var(--dim);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 0;
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
+}
+
+.camera-dock .mode:hover:not(.active) {
+  color: var(--bright);
+  background: color-mix(in oklab, var(--ink) 5%, transparent);
+}
+
+.camera-dock .mode.active {
+  color: var(--on-accent);
+  background: var(--accent-fill);
+  box-shadow: inset 0 1px 2px color-mix(in oklab, black 12%, transparent);
+}
+
+/* ---- The settings accent picker ----------------------------------------- */
+
+.swatches {
+  display: flex;
+  gap: 8px;
+}
+
+.swatch-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--edge);
+  cursor: pointer;
+  box-shadow: var(--hi), var(--shadow-raise);
+}
+
+.swatch-btn[aria-pressed="true"] {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+/* ---- Stats: perf hero, scene band, pressure footnote -------------------- */
+
+.stat-hero {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.stat-big {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-unit {
+  margin-left: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+}
+
+.stat-frame {
+  font-size: 10px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-cells {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--divider);
+  padding-top: 11px;
+}
+
+.stat-cell {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+}
+
+.stat-cell > span {
+  font-size: 12px;
+  color: var(--bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-cell small,
+.stat-foot small {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--dim);
+}
+
+.stat-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid var(--divider);
+  padding-top: 9px;
+  font-size: 10px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-foot-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* The controls sheet (settings panel): action leads, keycaps trail. */
+.shortcuts {
+  border-top: 1px solid var(--divider);
+  margin-top: 4px;
+  padding-top: 4px;
+  display: grid;
+  gap: 5px;
+}
+
+.shortcut-group {
+  margin: 8px 0 2px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.shortcut {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 22px;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.shortcut .keys {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* Keycaps share the chip material: a small raised clay cap. */
+kbd {
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text);
+  background: linear-gradient(var(--chip-top), var(--chip-bottom));
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  padding: 0 5px;
+  box-shadow: 0 1px 0 rgb(0 0 0 / 8%);
+}
+
+/* ---- Bottom-centre status: a pill that fades with relevance ------------- */
+
+#bottom-status {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(440px, 70vw);
+  text-align: center;
+  z-index: 3;
+  pointer-events: none;
+}
+
+#status {
+  display: inline-block;
+  min-height: 1.2em;
+  margin: 0 0 8px;
+  padding: 5px 16px;
+  font-size: 11px;
+  color: var(--accent-ink);
+  background: var(--surface);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  box-shadow: var(--hi), var(--shadow-island);
+  opacity: 1;
+  transition: opacity 0.35s ease;
+}
+
+#status:empty {
+  opacity: 0;
+}
+
+#status.error {
+  color: var(--danger);
+}
+
+.build-bar {
+  display: flex;
+  gap: 3px;
+  height: 5px;
+  margin: 0;
+}
+
+.build-bar .seg {
+  flex: 1;
+  background: var(--well);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.build-bar .seg > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent-fill);
+  transition: width 120ms linear;
+}
+
+.build-bar .seg.indeterminate > i {
+  width: 100%;
+  animation: bar-pulse 1s ease-in-out infinite;
+}
+
+@keyframes bar-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+/* ---- Overlay (fatal states) --------------------------------------------- */
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in oklab, black 65%, transparent); /* scrim: dark in both themes */
+  z-index: 4;
+}
+
+#overlay[hidden] {
+  display: none;
+}
+
+.card {
+  max-width: 420px;
+  padding: 22px 26px;
+  background: var(--surface);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  box-shadow: var(--hi), var(--shadow-island);
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--accent-ink);
+}
+
+.card p {
+  margin: 0;
+  color: var(--text);
+}
+
+/* ---- Demo gallery (the model launcher) ----------------------------------- */
+
+.gallery {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 3; /* below the fatal #overlay (4), above the dock UI */
+  padding: 24px;
+}
+
+.gallery[hidden] {
+  display: none;
+}
+
+.gallery-scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, black 55%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  cursor: pointer;
+}
+
+.gallery-sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 100%);
+  max-height: min(86vh, 760px);
+  padding: 20px 22px 16px;
+  background: var(--surface);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  box-shadow: var(--hi), var(--shadow-island);
+  animation: gallery-rise 160ms ease-out;
+}
+
+@keyframes gallery-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+}
+
+.gallery-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.gallery-head h2 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  color: var(--accent-ink);
+}
+
+.gallery-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--dim);
+  background: linear-gradient(var(--chip-top), var(--chip-bottom));
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.gallery-close:hover {
+  color: var(--bright);
+  background: linear-gradient(var(--chip-top-hover), var(--chip-bottom-hover));
+}
+
+.gallery-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 14px;
+  overflow-y: auto;
+  padding: 2px;
+  margin: -2px;
+}
+
+.demo-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 0;
+  overflow: hidden;
+  background: linear-gradient(var(--chip-top), var(--chip-bottom));
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.demo-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-edge);
+  box-shadow: var(--shadow-raise);
+}
+
+.demo-card:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+.demo-thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  background:
+    radial-gradient(120% 120% at 30% 20%, var(--accent-soft), transparent 60%),
+    var(--well);
+  overflow: hidden;
+}
+
+.demo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Placeholder card (no hand-authored thumbnail yet): a monogram over the
+   accent-tinted well. */
+.demo-thumb .demo-monogram {
+  font-size: 30px;
+  font-weight: 600;
+  color: color-mix(in oklab, var(--accent-ink) 70%, transparent);
+  text-transform: uppercase;
+}
+
+.demo-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px 11px;
+}
+
+.demo-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bright);
+}
+
+.demo-attr {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.gallery-empty {
+  margin: 24px auto;
+  color: var(--dim);
+  text-align: center;
+}
+
+.gallery-empty code {
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+.gallery-foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+  font-size: 11px;
+  color: var(--dim);
+}
+
+/* The current-scene readout that replaced the fixture picker's status role. */
+.scene-current .scene-name {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+/* ---- Focus + motion ------------------------------------------------------ */
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 1px solid var(--accent-ink);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
