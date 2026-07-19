@@ -97,6 +97,14 @@ class FakeHost implements RenderHost {
     this.wheels.push(notches);
   }
   readonly cameraModes: CameraMode[] = [];
+  readonly shadowCalls: boolean[] = [];
+  readonly gtaoQualityCalls: number[] = [];
+  setShadows(on: boolean): void {
+    this.shadowCalls.push(on);
+  }
+  setGtaoQuality(preset: number): void {
+    this.gtaoQualityCalls.push(preset);
+  }
   setCameraMode(mode: CameraMode): void {
     this.cameraModes.push(mode);
   }
@@ -408,6 +416,23 @@ describe("scene application and edit gating", () => {
       expect(host.setBrushes.at(-1)?.[0]).toBe(tool);
       expect(btn.classList.contains("active")).toBe(true);
     }
+  });
+});
+
+describe("lighting effects", () => {
+  it("boots with medium AO quality and shadows off, and forwards changes to the host", () => {
+    const { ui, host } = setup();
+    // Markup defaults: the web ships Medium AO + shadows off (perf).
+    expect(ui.gtaoQuality.value).toBe("1");
+    expect(ui.shadows.checked).toBe(false);
+
+    ui.gtaoQuality.value = "3";
+    ui.gtaoQuality.dispatchEvent(new Event("change"));
+    expect(host.gtaoQualityCalls).toEqual([3]);
+
+    ui.shadows.checked = true;
+    ui.shadows.dispatchEvent(new Event("change"));
+    expect(host.shadowCalls).toEqual([true]);
   });
 });
 

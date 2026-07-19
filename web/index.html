@@ -230,6 +230,24 @@
                       aria-pressed="false" style="background: oklch(84% 0.1 295)"></button>
             </div>
           </div>
+          <!-- Lighting effects (the deferred GTAO pipeline): quality trades AO
+               sample count for speed; the ray-traced sun shadow is a real
+               per-pixel cost, so it ships off by default on the web. -->
+          <div class="rows" aria-label="effects">
+            <label class="row">
+              <span>AO quality</span>
+              <select id="gtao-quality">
+                <option value="0">low</option>
+                <option value="1" selected>medium</option>
+                <option value="2">high</option>
+                <option value="3">ultra</option>
+              </select>
+            </label>
+            <label class="row check">
+              <span>sun shadows</span>
+              <input type="checkbox" id="shadows" />
+            </label>
+          </div>
           <!-- The controls sheet: one row per action, keycaps right-aligned —
                a shortcut is looked up by what you want to do, so the action
                leads and the keys follow. -->

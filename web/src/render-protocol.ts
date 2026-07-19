@@ -134,6 +134,10 @@ export type RenderRequest =
   | { readonly kind: "resetPivot" }
   | { readonly kind: "wheel"; readonly notches: number }
   | { readonly kind: "cameraMode"; readonly mode: CameraMode }
+  // Effects (GTAO lighting): the sun-shadow toggle and the quality preset
+  // (0 Low, 1 Medium, 2 High, 3 Ultra) — settings-panel controls.
+  | { readonly kind: "setShadows"; readonly on: boolean }
+  | { readonly kind: "setGtaoQuality"; readonly preset: number }
   | {
       readonly kind: "setBrush";
       readonly tool: BrushTool;

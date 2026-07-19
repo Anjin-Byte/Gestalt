@@ -49,6 +49,10 @@ export interface RenderHost {
   wheel(notches: number): void;
   /** Selects the camera control scheme (the HUD mode buttons). */
   setCameraMode(mode: CameraMode): void;
+  /** Toggles the ray-traced sun shadow (a real per-pixel cost; web default off). */
+  setShadows(on: boolean): void;
+  /** Sets the GTAO quality preset (0 Low, 1 Medium, 2 High, 3 Ultra). */
+  setGtaoQuality(preset: number): void;
   /** Sets the brush configuration (control plane — the HUD tool palette).
    * `invert` is the Alt-held tool arm (Inflate → deflate). */
   setBrush(
@@ -176,6 +180,12 @@ export class WorkerRenderHost implements RenderHost {
   }
   setCameraMode(mode: CameraMode): void {
     this.#post({ kind: "cameraMode", mode }, []);
+  }
+  setShadows(on: boolean): void {
+    this.#post({ kind: "setShadows", on }, []);
+  }
+  setGtaoQuality(preset: number): void {
+    this.#post({ kind: "setGtaoQuality", preset }, []);
   }
   setBrush(
     tool: BrushTool,
@@ -341,6 +351,12 @@ export class LocalRenderHost implements RenderHost {
   }
   setCameraMode(mode: CameraMode): void {
     this.#engine?.set_camera_mode(mode);
+  }
+  setShadows(on: boolean): void {
+    this.#engine?.set_shadows(on);
+  }
+  setGtaoQuality(preset: number): void {
+    this.#engine?.set_gtao_quality(preset);
   }
   setBrush(
     tool: BrushTool,

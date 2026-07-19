@@ -71,6 +71,8 @@ function makeEngine(): EngineLike & { statsFreed: number[] } {
     reset_pivot: vi.fn(),
     wheel: vi.fn(),
     set_camera_mode: vi.fn(),
+    set_shadows: vi.fn(),
+    set_gtao_quality: vi.fn(),
     set_brush: vi.fn(),
     brush: vi.fn(),
     brush_end: vi.fn(),

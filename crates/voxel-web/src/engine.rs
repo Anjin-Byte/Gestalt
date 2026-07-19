@@ -197,6 +197,11 @@ pub struct Engine {
     /// The themed sky endpoints (top, bottom — sRGB RGBA8, R low), kept so a
     /// renderer recreation (install, promotion) re-applies the theme.
     sky: Option<(u32, u32)>,
+    /// Ray-traced hard sun shadows (a real per-pixel cost) — web default OFF;
+    /// the shell's settings toggle re-applies it across renderer rebuilds.
+    shadows: bool,
+    /// GTAO quality preset index (0 Low, 1 Medium, 2 High, 3 Ultra).
+    gtao_preset: u32,
     /// The per-stroke undo/redo history (`docs/design/brush-editing/05`).
     undo_ring: UndoRing,
     /// Set when a topology re-upload failed: the renderer's buffers are stale,
@@ -204,6 +209,22 @@ pub struct Engine {
     needs_full_upload: bool,
     frames: u32,
     last_dt_ms: f64,
+}
+
+/// The renderer-side GTAO params for a shell preset index (0 Low … 3 Ultra).
+/// Mirrors the native viewer's G-cycle table; radius matches the default.
+fn gtao_params_for(preset: u32) -> voxel_gpu::GtaoParams {
+    let (slice_count, steps_per_slice) = match preset {
+        0 => (1.0, 2.0),
+        2 => (3.0, 3.0),
+        3 => (9.0, 3.0),
+        _ => (2.0, 2.0), // 1 = Medium (the renderer default)
+    };
+    voxel_gpu::GtaoParams {
+        slice_count,
+        steps_per_slice,
+        ..voxel_gpu::GtaoParams::default()
+    }
 }
 
 #[wasm_bindgen]
@@ -310,8 +331,10 @@ impl Engine {
         // Fixtures carry no materials: the magenta-only table makes every hit
         // global-0, which the shader shades by position.
         let table = MaterialTable::missing_only();
-        let renderer =
+        let mut renderer =
             GpuRenderer::new(&ctx, &structure, &table).map_err(|e| JsError::new(&e.to_string()))?;
+        // Web defaults: shadows off (perf), Medium GTAO (the renderer default).
+        renderer.set_shadows(false);
 
         let (blit_pipeline, blit_layout, sampler) = blit::build_blit(&ctx.device, format);
         let output_view = blit::make_output(&ctx.device, width, height);
@@ -348,6 +371,9 @@ impl Engine {
             input: Input::default(),
             last_camera: orbit.to_gpu(orbit_frame, width, height, n, resolution.internal_levels()),
             brush_params: BrushParams::default(),
+            shadows: false, // web default: shadows off (perf)
+            gtao_preset: 1, // Medium
+
             stroke_last: None,
             stroke: StrokeState::default(),
             hover: None,
@@ -372,7 +398,7 @@ impl Engine {
         self.last_camera = camera;
         self.input.end_frame();
 
-        let Some(renderer) = &self.renderer else {
+        let Some(renderer) = &mut self.renderer else {
             return; // mid-install / failed install: keep the last presented image
         };
         // The hover-cursor ring rides the per-frame upload (one 32-byte
@@ -558,7 +584,7 @@ impl Engine {
         // seam) builds the editable *paged* renderer; every other scene builds the
         // palette/static renderer. The paged read is byte-identical to the static
         // truecolor read, so a colour scene renders the same either way.
-        let renderer = if let Some(pages) = scene.tree.color_pages() {
+        let mut renderer = if let Some(pages) = scene.tree.color_pages() {
             GpuRenderer::new_paged(&self.ctx, &scene.structure, &pages)
         } else {
             GpuRenderer::new(&self.ctx, &scene.structure, &scene.table)
@@ -567,6 +593,10 @@ impl Engine {
         if let Some((top, bottom)) = self.sky {
             renderer.set_sky(top, bottom);
         }
+        // Re-apply the shell's effect settings — a fresh renderer defaults to
+        // shadows ON / Medium, not necessarily what the user chose.
+        renderer.set_shadows(self.shadows);
+        renderer.set_gtao_params(gtao_params_for(self.gtao_preset));
         self.renderer = Some(renderer);
 
         // Label conventions: the multi-model caveat (a `.vox` file loads only
@@ -644,6 +674,24 @@ impl Engine {
     /// RGBA8, R low), dithered per pixel on the GPU so the subtle ramp never
     /// bands. The shell derives both colours from the live CSS theme tokens,
     /// so the canvas follows the stylesheet. Survives renderer recreation.
+    /// Enables/disables the ray-traced sun shadow (web default off). Applies to
+    /// the live renderer and to every renderer rebuilt on a later install.
+    pub fn set_shadows(&mut self, on: bool) {
+        self.shadows = on;
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_shadows(on);
+        }
+    }
+
+    /// Sets the GTAO quality preset (`0` Low 1×2, `1` Medium 2×2, `2` High 3×3,
+    /// `3` Ultra 9×3 — clamped). Applies now and across scene installs.
+    pub fn set_gtao_quality(&mut self, preset: u32) {
+        self.gtao_preset = preset.min(3);
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_gtao_params(gtao_params_for(self.gtao_preset));
+        }
+    }
+
     pub fn set_background(&mut self, top_rgba: u32, bottom_rgba: u32) {
         self.sky = Some((top_rgba, bottom_rgba));
         if let Some(renderer) = &self.renderer {
@@ -863,8 +911,12 @@ impl Engine {
             .tree
             .color_pages()
             .and_then(|pages| GpuRenderer::new_paged(&self.ctx, &self.structure, &pages).ok());
-        if let (Some(renderer), Some((top, bottom))) = (&self.renderer, self.sky) {
-            renderer.set_sky(top, bottom);
+        if let Some(renderer) = &mut self.renderer {
+            if let Some((top, bottom)) = self.sky {
+                renderer.set_sky(top, bottom);
+            }
+            renderer.set_shadows(self.shadows);
+            renderer.set_gtao_params(gtao_params_for(self.gtao_preset));
         }
         self.needs_full_upload = self.renderer.is_none();
         self.undo_ring.clear();

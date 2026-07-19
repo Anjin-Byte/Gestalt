@@ -97,6 +97,10 @@ export interface Ui {
   readonly exportCvoxBtn: HTMLButtonElement;
   readonly revoxelizeBtn: HTMLButtonElement;
   readonly camOrbit: HTMLButtonElement;
+  /** The GTAO quality preset picker (settings panel). */
+  readonly gtaoQuality: HTMLSelectElement;
+  /** The ray-traced sun-shadow toggle (settings panel; default off). */
+  readonly shadows: HTMLInputElement;
   readonly camFly: HTMLButtonElement;
   readonly file: HTMLInputElement;
   readonly status: HTMLElement;
@@ -154,6 +158,8 @@ export function bindUi(): Ui {
     exportCvoxBtn: must(document, "#export-cvox", HTMLButtonElement),
     revoxelizeBtn: must(document, "#revoxelize", HTMLButtonElement),
     camOrbit: must(document, "#cam-orbit", HTMLButtonElement),
+    gtaoQuality: must(document, "#gtao-quality", HTMLSelectElement),
+    shadows: must(document, "#shadows", HTMLInputElement),
     camFly: must(document, "#cam-fly", HTMLButtonElement),
     file: must(document, "#file", HTMLInputElement),
     status: must(document, "#status", HTMLElement),
@@ -953,6 +959,15 @@ export function run(
       ui.galleryGrid.appendChild(card);
     }
   }
+
+  // Lighting effects: control-plane messages, applied immediately (the kernel
+  // re-applies them across scene installs).
+  ui.gtaoQuality.addEventListener("change", () => {
+    host.setGtaoQuality(Number(ui.gtaoQuality.value));
+  });
+  ui.shadows.addEventListener("change", () => {
+    host.setShadows(ui.shadows.checked);
+  });
 
   ui.browseDemos.addEventListener("click", openGallery);
   // Dismiss on the scrim or close button (both carry data-gallery-dismiss), or
