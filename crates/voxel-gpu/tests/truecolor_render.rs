@@ -60,7 +60,7 @@ fn front_camera(r: Resolution, dim: u32) -> GpuCamera {
 /// reads it back as RGBA8 pixels (row-major). `dim*4` must be a multiple of 256.
 fn read_render(
     ctx: &GpuContext,
-    renderer: &GpuRenderer,
+    renderer: &mut GpuRenderer,
     camera: &GpuCamera,
     dim: u32,
 ) -> Vec<[u8; 4]> {
@@ -153,9 +153,9 @@ fn truecolor_renders_baked_colour_matching_the_assembler() {
         "scene must route through truecolor"
     );
 
-    let renderer = GpuRenderer::new(&ctx, &structure, &MaterialTable::missing_only()).unwrap();
+    let mut renderer = GpuRenderer::new(&ctx, &structure, &MaterialTable::missing_only()).unwrap();
     let dim = 64u32;
-    let px = read_render(&ctx, &renderer, &front_camera(r, dim), dim);
+    let px = read_render(&ctx, &mut renderer, &front_camera(r, dim), dim);
 
     let exact = px.iter().filter(|p| **p == FLAT_COLOR).count();
     let magenta = px.iter().filter(|p| **p == [255, 0, 255, 255]).count();
@@ -218,7 +218,7 @@ fn truecolor_chunk_select_reads_a_high_chunk() {
         "geometry did not cross a chunk boundary; test is vacuous"
     );
 
-    let renderer = GpuRenderer::new_with_per_chunk(
+    let mut renderer = GpuRenderer::new_with_per_chunk(
         &ctx,
         &structure,
         &MaterialTable::missing_only(),
@@ -226,7 +226,7 @@ fn truecolor_chunk_select_reads_a_high_chunk() {
     )
     .unwrap();
     let dim = 64u32;
-    let px = read_render(&ctx, &renderer, &front_camera(r, dim), dim);
+    let px = read_render(&ctx, &mut renderer, &front_camera(r, dim), dim);
 
     let hits_c = px.iter().filter(|p| **p == HI_COLOR).count();
     assert!(
@@ -270,9 +270,9 @@ fn truecolor_blend_composites_front_over_back() {
         "the α=128 front voxels must flag the scene transparent (→ blend pipeline)"
     );
 
-    let renderer = GpuRenderer::new(&ctx, &structure, &MaterialTable::missing_only()).unwrap();
+    let mut renderer = GpuRenderer::new(&ctx, &structure, &MaterialTable::missing_only()).unwrap();
     let dim = 64u32;
-    let px = read_render(&ctx, &renderer, &front_camera(r, dim), dim);
+    let px = read_render(&ctx, &mut renderer, &front_camera(r, dim), dim);
 
     // The composite ≈ (128, 0, 127): R from the front blend, B from the back opaque.
     let composited = px

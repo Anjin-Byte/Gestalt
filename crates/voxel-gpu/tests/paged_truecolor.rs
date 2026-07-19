@@ -61,7 +61,7 @@ fn front_camera(r: Resolution, dim: u32) -> GpuCamera {
 /// Renders `renderer` into a `dim×dim` framebuffer, read back row-major.
 fn read_render(
     ctx: &GpuContext,
-    renderer: &GpuRenderer,
+    renderer: &mut GpuRenderer,
     camera: &GpuCamera,
     dim: u32,
 ) -> Vec<[u8; 4]> {
@@ -206,7 +206,8 @@ fn paged_render_matches_static_across_a_chunk_boundary() {
     // Static (build-once) reference: colours baked into the structure.
     let mut static_struct = SchoolBBuffer::from_sparse(&base);
     static_struct.assemble_leaf_color(&base, color_bytes);
-    let static_r = GpuRenderer::new(&ctx, &static_struct, &MaterialTable::missing_only()).unwrap();
+    let mut static_r =
+        GpuRenderer::new(&ctx, &static_struct, &MaterialTable::missing_only()).unwrap();
 
     // Paged: colours installed into the tree with a forced-tiny 512-entry chunk,
     // so the 1024-entry pool spans two GPU chunks.
@@ -216,11 +217,11 @@ fn paged_render_matches_static_across_a_chunk_boundary() {
         paged_tree.color_pages().unwrap().total_entries() > 512,
         "scene must exceed one 512-entry chunk (else the cross-chunk read is untested)"
     );
-    let (_ps, paged_r) = paged(&ctx, &paged_tree);
+    let (_ps, mut paged_r) = paged(&ctx, &paged_tree);
 
     assert_eq!(
-        read_render(&ctx, &static_r, &front_camera(r, dim), dim),
-        read_render(&ctx, &paged_r, &front_camera(r, dim), dim),
+        read_render(&ctx, &mut static_r, &front_camera(r, dim), dim),
+        read_render(&ctx, &mut paged_r, &front_camera(r, dim), dim),
         "paged render diverged from the build-once static render (cross-chunk read bug?)"
     );
 }
@@ -246,10 +247,10 @@ fn in_place_paint_matches_a_fresh_rebuild() {
     };
     sync_color(&mut renderer, &tree, leaf);
 
-    let (_fs, fresh) = paged(&ctx, &tree);
+    let (_fs, mut fresh) = paged(&ctx, &tree);
     assert_eq!(
-        read_render(&ctx, &renderer, &front_camera(r, dim), dim),
-        read_render(&ctx, &fresh, &front_camera(r, dim), dim),
+        read_render(&ctx, &mut renderer, &front_camera(r, dim), dim),
+        read_render(&ctx, &mut fresh, &front_camera(r, dim), dim),
         "painted render diverged from a fresh rebuild of the edited tree"
     );
 }
@@ -282,10 +283,10 @@ fn in_place_add_crossing_a_class_matches_a_fresh_rebuild() {
     renderer.update_leaf(&structure, leaf).unwrap();
     sync_color(&mut renderer, &tree, leaf);
 
-    let (_fs, fresh) = paged(&ctx, &tree);
+    let (_fs, mut fresh) = paged(&ctx, &tree);
     assert_eq!(
-        read_render(&ctx, &renderer, &front_camera(r, dim), dim),
-        read_render(&ctx, &fresh, &front_camera(r, dim), dim),
+        read_render(&ctx, &mut renderer, &front_camera(r, dim), dim),
+        read_render(&ctx, &mut fresh, &front_camera(r, dim), dim),
         "class-crossing add diverged from a fresh rebuild of the edited tree"
     );
 }
@@ -309,10 +310,10 @@ fn topology_erase_via_reupload_paged_matches_a_fresh_rebuild() {
     let structure = SchoolBBuffer::from_sparse(&tree);
     renderer.reupload_paged(&structure).unwrap();
 
-    let (_fs, fresh) = paged(&ctx, &tree);
+    let (_fs, mut fresh) = paged(&ctx, &tree);
     assert_eq!(
-        read_render(&ctx, &renderer, &front_camera(r, dim), dim),
-        read_render(&ctx, &fresh, &front_camera(r, dim), dim),
+        read_render(&ctx, &mut renderer, &front_camera(r, dim), dim),
+        read_render(&ctx, &mut fresh, &front_camera(r, dim), dim),
         "post-erase render diverged from a fresh rebuild of the edited tree"
     );
 }
@@ -329,17 +330,17 @@ fn cursor_ring_is_invisible_when_inactive_and_reversible() {
     let base = two_brick_tree(r);
     let mut tree = base.clone();
     tree.install_colors(colors_in_order(&base, color_bytes).into_iter());
-    let (_s, renderer) = paged(&ctx, &tree);
+    let (_s, mut renderer) = paged(&ctx, &tree);
     let cam = front_camera(r, dim);
 
-    let baseline = read_render(&ctx, &renderer, &cam, dim);
+    let baseline = read_render(&ctx, &mut renderer, &cam, dim);
     // A ring centred on the front face of the first brick, radius 4.
     renderer.set_cursor([20.0, 20.0, 0.0], 4.0, true);
-    let ringed = read_render(&ctx, &renderer, &cam, dim);
+    let ringed = read_render(&ctx, &mut renderer, &cam, dim);
     assert_ne!(baseline, ringed, "an active cursor must be visible");
     renderer.set_cursor([20.0, 20.0, 0.0], 4.0, false);
     assert_eq!(
-        read_render(&ctx, &renderer, &cam, dim),
+        read_render(&ctx, &mut renderer, &cam, dim),
         baseline,
         "deactivating the cursor must restore the exact baseline"
     );
@@ -357,20 +358,21 @@ fn themed_sky_is_consistent_across_pipelines_and_reversible() {
 
     let mut static_struct = SchoolBBuffer::from_sparse(&base);
     static_struct.assemble_leaf_color(&base, color_bytes);
-    let static_r = GpuRenderer::new(&ctx, &static_struct, &MaterialTable::missing_only()).unwrap();
+    let mut static_r =
+        GpuRenderer::new(&ctx, &static_struct, &MaterialTable::missing_only()).unwrap();
     let mut paged_tree = base.clone();
     paged_tree.install_colors(colors_in_order(&base, color_bytes).into_iter());
-    let (_s, paged_r) = paged(&ctx, &paged_tree);
+    let (_s, mut paged_r) = paged(&ctx, &paged_tree);
     let cam = front_camera(r, dim);
 
-    let baseline = read_render(&ctx, &paged_r, &cam, dim);
+    let baseline = read_render(&ctx, &mut paged_r, &cam, dim);
     // A warm light-theme sky (sRGB RGBA8, R low).
     let top = u32::from_le_bytes([248, 244, 233, 255]);
     let bottom = u32::from_le_bytes([220, 215, 202, 255]);
     static_r.set_sky(top, bottom);
     paged_r.set_sky(top, bottom);
-    let lit_static = read_render(&ctx, &static_r, &cam, dim);
-    let lit_paged = read_render(&ctx, &paged_r, &cam, dim);
+    let lit_static = read_render(&ctx, &mut static_r, &cam, dim);
+    let lit_paged = read_render(&ctx, &mut paged_r, &cam, dim);
     assert_ne!(baseline, lit_paged, "a new sky must be visible");
     assert_eq!(lit_static, lit_paged, "both pipelines share one sky");
     // Reversible: re-setting the same endpoints reproduces the same image
@@ -380,7 +382,7 @@ fn themed_sky_is_consistent_across_pipelines_and_reversible() {
     paged_r.set_sky(u32::from_le_bytes([10, 20, 30, 255]), bottom);
     paged_r.set_sky(top, bottom);
     assert_eq!(
-        read_render(&ctx, &paged_r, &cam, dim),
+        read_render(&ctx, &mut paged_r, &cam, dim),
         lit_paged,
         "same endpoints, same image"
     );

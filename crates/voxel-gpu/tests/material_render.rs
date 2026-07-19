@@ -65,7 +65,7 @@ fn render_pixels(
     camera: &GpuCamera,
     dim: u32,
 ) -> Vec<[u8; 4]> {
-    let renderer = GpuRenderer::new(ctx, structure, table).unwrap();
+    let mut renderer = GpuRenderer::new(ctx, structure, table).unwrap();
     let tex = ctx.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("material test output"),
         size: wgpu::Extent3d {

@@ -26,7 +26,7 @@ pub use error::GpuError;
 #[cfg(not(target_arch = "wasm32"))]
 pub use generate::generate_noise_tree;
 pub use generate::generate_noise_tree_async;
-pub use render::{GpuRenderer, OUTPUT_FORMAT};
+pub use render::{GpuRenderer, GtaoParams, NUM_TIMED_STAGES, OUTPUT_FORMAT, RENDER_STAGE_LABELS};
 // Re-exported from the contract's home so existing `voxel_gpu::GpuCamera`
 // imports keep working after the stage-2 move.
 pub use traverse::GpuTraverser;

@@ -24,6 +24,7 @@ pub(crate) const CURSOR_WGSL: &str = include_str!("../shaders/cursor.wgsl");
 pub(crate) const SKY_WGSL: &str = include_str!("../shaders/sky.wgsl");
 
 /// [`shader_source`] plus the cursor snippet — the render-path builder.
+#[allow(dead_code)] // forward-path reference (deferred g-buffer assembles its own sources)
 pub(crate) fn render_shader_source(entry: &str) -> String {
     format!(
         "{}\n{}\n{}\n{}",
@@ -166,6 +167,7 @@ pub(crate) fn bind(binding: u32, resource: wgpu::BindingResource) -> wgpu::BindG
 
 /// The write-only `D2` storage-texture layout entry (the render output@4), shared
 /// by the palette and truecolor bind-group layouts.
+#[allow(dead_code)] // forward-path reference (deferred passes build their own entries)
 pub(crate) fn storage_texture_entry(
     binding: u32,
     format: wgpu::TextureFormat,
@@ -214,6 +216,7 @@ pub(crate) const MAX_BLEND: u32 = 8;
 /// Builds the truecolor shader source: the injected `PER_CHUNK` const, then the
 /// shared `traversal.wgsl` core, then the truecolor entry. Injecting the const
 /// here (rather than declaring it in the `.wgsl`) keeps CPU and WGSL in lockstep.
+#[allow(dead_code)] // forward parity reference for the deferred colour lookup
 pub(crate) fn color_shader_source(per_chunk: u32) -> String {
     format!(
         "const PER_CHUNK: u32 = {per_chunk}u;\n{}\n{}\n{}\n{}",
@@ -228,6 +231,7 @@ pub(crate) fn color_shader_source(per_chunk: u32) -> String {
 /// then the shared traversal core, then the front-to-back compositing entry). Same
 /// 7 bindings as [`color_shader_source`]; selected only when the scene has
 /// transparent leaves.
+#[allow(dead_code)] // forward parity reference for the deferred blend pass
 pub(crate) fn color_blend_shader_source(per_chunk: u32, max_blend: u32) -> String {
     // The cursor snippet is concatenated for a uniform binding interface, but
     // the blend compositor does not draw the ring (no single hit voxel to
@@ -238,6 +242,19 @@ pub(crate) fn color_blend_shader_source(per_chunk: u32, max_blend: u32) -> Strin
         CURSOR_WGSL,
         SKY_WGSL,
         include_str!("../shaders/render_truecolor_blend.wgsl"),
+    )
+}
+
+/// Builds the deferred **forward-blend** transparency source (GTAO Stage C):
+/// injected `PER_CHUNK` + `MAX_BLEND`, the shared traversal core, then
+/// `blend_forward.wgsl` (which composites transparents over the deferred-lit
+/// result into `color_blended`). A SIBLING of [`color_blend_shader_source`] —
+/// not a retarget — so the forward parity reference stays untouched.
+pub(crate) fn blend_forward_shader_source(per_chunk: u32, max_blend: u32) -> String {
+    format!(
+        "const PER_CHUNK: u32 = {per_chunk}u;\nconst MAX_BLEND: u32 = {max_blend}u;\n{}\n{}",
+        include_str!("../shaders/traversal.wgsl"),
+        include_str!("../shaders/blend_forward.wgsl"),
     )
 }
 
