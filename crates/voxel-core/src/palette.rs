@@ -531,7 +531,10 @@ mod tests {
         let bits = 3u32;
         let m = 10u32;
         assert_eq!(m * bits, 30);
-        assert!((30 & 31) + bits > 32, "morton 10 must straddle at bits=3");
+        assert!(
+            ((m * bits) & 0x1f) + bits > 32,
+            "morton 10 must straddle at bits=3"
+        );
 
         // u16 half-select: even palette index → low 16 bits, odd → high 16.
         // Build a leaf where voxel A has pi=2 (even) and voxel B has pi=3 (odd).

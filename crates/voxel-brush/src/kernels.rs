@@ -346,16 +346,17 @@ fn smooth_ops<F: Field>(
             let occ_f = if was { 1.0 } else { 0.0 };
             let now = occ_f + (density - occ_f) * sw >= 0.5;
             if now {
-                let filtered = if count > 0 {
-                    #[allow(clippy::cast_possible_truncation)] // mean of bytes
-                    u32::from_le_bytes([
-                        (csum[0] / count) as u8,
-                        (csum[1] / count) as u8,
-                        (csum[2] / count) as u8,
-                        255,
-                    ])
-                } else {
-                    old_color
+                let filtered = match count {
+                    0 => old_color,
+                    n => {
+                        #[allow(clippy::cast_possible_truncation)] // mean of bytes
+                        u32::from_le_bytes([
+                            (csum[0] / n) as u8,
+                            (csum[1] / n) as u8,
+                            (csum[2] / n) as u8,
+                            255,
+                        ])
+                    }
                 };
                 if !was || filtered != old_color {
                     changes.push((c, (true, filtered)));

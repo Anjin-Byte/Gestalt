@@ -126,8 +126,7 @@ fn ci_deps() -> Result<()> {
     let have_deny = Command::new(cargo())
         .args(["deny", "--version"])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+        .is_ok_and(|o| o.status.success());
     if !have_deny {
         bail!(
             "cargo-deny not found; install it with `cargo install --locked cargo-deny` \

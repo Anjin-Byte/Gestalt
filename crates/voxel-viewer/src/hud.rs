@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn glyph_uv_is_within_unit_square() {
-        for c in [b'A', b'z', b'0', b'~'] {
+        for &c in b"Az0~" {
             let [u0, v0, u1, v1] = glyph_uv(c);
             assert!((0.0..=1.0).contains(&u0) && (0.0..=1.0).contains(&u1));
             assert!((0.0..=1.0).contains(&v0) && (0.0..=1.0).contains(&v1));
