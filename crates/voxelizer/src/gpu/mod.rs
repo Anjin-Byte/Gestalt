@@ -338,23 +338,23 @@ impl GpuVoxelizer {
         let max_storage = self.max_storage_buffer_binding_size;
         let max_workgroups = u64::from(self.max_compute_workgroups_per_dimension);
 
+        // `checked_div` folds in the divide-by-zero guard (bytes are only zero
+        // for a degenerate 0-voxel brick): fall back to the whole budget.
         let occupancy_bytes = words_per_brick.saturating_mul(4);
-        let mut max_bricks = if occupancy_bytes > 0 {
-            max_storage / occupancy_bytes
-        } else {
-            max_storage
-        };
+        let mut max_bricks = max_storage
+            .checked_div(occupancy_bytes)
+            .unwrap_or(max_storage);
 
         if opts.store_owner {
             let owner_bytes = brick_voxels.saturating_mul(4);
-            if owner_bytes > 0 {
-                max_bricks = max_bricks.min(max_storage / owner_bytes);
+            if let Some(bricks) = max_storage.checked_div(owner_bytes) {
+                max_bricks = max_bricks.min(bricks);
             }
         }
         if opts.store_color {
             let color_bytes = brick_voxels.saturating_mul(4);
-            if color_bytes > 0 {
-                max_bricks = max_bricks.min(max_storage / color_bytes);
+            if let Some(bricks) = max_storage.checked_div(color_bytes) {
+                max_bricks = max_bricks.min(bricks);
             }
         }
 

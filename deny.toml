@@ -26,7 +26,18 @@ version = 2
 # otherwise red the gate). cargo-deny v2 defaults this to "all"; narrow it here.
 yanked = "warn"
 unmaintained = "workspace"
-ignore = []
+# Two quick-xml <0.41 DoS advisories (quadratic-time duplicate-attribute check;
+# unbounded NsReader namespace allocation) that only bite when parsing UNTRUSTED
+# XML. Here quick-xml is a build-time transitive dep of `wayland-scanner`
+# (winit → smithay-client-toolkit, Linux only), which parses trusted, local
+# Wayland protocol XML during codegen — never attacker input — and only for the
+# native `voxel-viewer` dev tool, never the shipped web app. No compatible fix:
+# wayland-scanner pins `quick-xml = "^0.39"`, so 0.41 needs a disruptive winit
+# ecosystem bump. Revisit when winit's wayland stack moves to quick-xml ≥0.41.
+ignore = [
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.41 quadratic-attr DoS; build-time trusted Wayland XML via winit; no compatible upgrade" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml <0.41 NsReader alloc DoS; build-time trusted Wayland XML via winit; no compatible upgrade" },
+]
 
 [licenses]
 version = 2
