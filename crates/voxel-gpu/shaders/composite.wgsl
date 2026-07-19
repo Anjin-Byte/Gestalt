@@ -83,9 +83,11 @@ fn composite_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // AO dims ambient; the ray-traced shadow gates direct sun.
         color = albedo * (ambient + ndl * SUN_COLOR * shadow);
     } else {
-        // The themed sky gradient (sky.wgsl, uniform @10) — dithered, same
-        // bytes the forward path wrote, passed through TAA untouched.
-        color = sky_color(vec2<u32>(gid.x, gid.y), f32(height)).rgb;
+        // The themed sky gradient (sky.wgsl, uniform @10), decoded to linear —
+        // the whole pre-TAA chain shades in linear light, and the TAA's final
+        // sRGB encode round-trips these back to the exact bytes the forward
+        // path wrote (dither survives the round trip).
+        color = pow(sky_color(vec2<u32>(gid.x, gid.y), f32(height)).rgb, vec3<f32>(2.2));
     }
     textureStore(output, vec2<u32>(gid.x, gid.y), vec4<f32>(color, 1.0));
 }

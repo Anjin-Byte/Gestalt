@@ -147,20 +147,29 @@ fn taa_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
+    // The whole chain shades in LINEAR light (composite decodes albedo + sky,
+    // the blend pass composites linear); this final store is the one place the
+    // image meets the display, so encode linear → sRGB here. Without it the
+    // rgba8 target holds linear values the display reads as sRGB — a double
+    // gamma that crushes every mid-tone (the "burnt" look). History stays
+    // linear so the temporal accumulation keeps filtering in light space.
+    let encoded = pow(max(out_rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+
     // The hover-cursor ring (cursor.wgsl @9, concatenated ahead of this module)
     // tints the SCREEN store only — history stays clean so a moving ring never
-    // ghosts into the accumulation. The hit voxel is reconstructed from depth by
-    // stepping an epsilon along the ray past the entry face (the forward path had
-    // the exact hit voxel; at extreme corner-grazing the epsilon can land one
-    // voxel off, invisible for a highlight band). Inactive cursor (enabled == 0,
-    // the zeroed-uniform default) leaves the store byte-identical.
-    var screen_rgb = out_rgb;
+    // ghosts into the accumulation. Applied to the display-space colour, the
+    // same space the forward path tinted, so the ring reads identically. The
+    // hit voxel is reconstructed from depth by stepping an epsilon along the
+    // ray past the entry face (at extreme corner-grazing the epsilon can land
+    // one voxel off, invisible for a highlight band). Inactive cursor
+    // (enabled == 0, the zeroed-uniform default) leaves the store byte-identical.
+    var screen_rgb = encoded;
     if (cursor.enabled > 0.5 && depth > 0.0) {
         let vpos = view_pos(screen_norm, depth);
         let world = camera.eye + vpos.x * camera.right + vpos.y * camera.up + vpos.z * camera.forward;
         let ray = normalize(world - camera.eye);
         let inside = clamp(world + ray * 1e-3, vec3<f32>(0.0), vec3<f32>(camera.n - 1.0));
-        screen_rgb = cursor_tint(out_rgb, vec3<u32>(floor(inside)));
+        screen_rgb = cursor_tint(encoded, vec3<u32>(floor(inside)));
     }
     textureStore(out_color, vec2<u32>(gid.x, gid.y), vec4<f32>(screen_rgb, 1.0));
     textureStore(out_history, vec2<u32>(gid.x, gid.y), vec4<f32>(out_rgb, new_a));
