@@ -40,7 +40,7 @@ use voxel_core::{
     Edit, MaterialTable, Ray, Resolution, SchoolBBuffer, SparseTree, VoxelCoord, brush_voxels,
     traverse,
 };
-use voxel_gpu::{GpuCamera, GpuContext, GpuRenderer};
+use voxel_gpu::{GpuCamera, GpuContext, GpuRenderer, GtaoParams};
 use voxelizer::{
     CompactVoxel, GpuVoxelizer, GpuVoxelizerConfig, MeshInput, VoxelGrid, VoxelizeOpts,
 };
@@ -181,6 +181,18 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// GTAO quality presets cycled by `G`: (label, `slice_count`, `steps_per_slice`).
+/// The effect radius is held constant ([`GTAO_RADIUS`]); only sample counts vary.
+/// Index 1 (Medium) matches the renderer's default.
+const GTAO_PRESETS: [(&str, f32, f32); 4] = [
+    ("LOW 1x2", 1.0, 2.0),
+    ("MEDIUM 2x2", 2.0, 2.0),
+    ("HIGH 3x3", 3.0, 3.0),
+    ("ULTRA 9x3", 9.0, 3.0),
+];
+/// Effect radius (voxels) shared by all presets — matches `GtaoParams::default`.
+const GTAO_RADIUS: f32 = 22.0;
+
 struct App {
     args: Args,
     state: Option<Viewer>,
@@ -274,6 +286,12 @@ struct Viewer {
     blit_bind: wgpu::BindGroup,
     hud: Hud,
     show_hud: bool,
+    /// Index into [`GTAO_PRESETS`] of the active GTAO quality, cycled with `G`.
+    gtao_preset: usize,
+    /// Toggle (`N`): GTAO spatial denoise + temporal accumulation.
+    denoise: bool,
+    /// Toggle (`K`): the ray-traced hard sun shadow (a real per-pixel cost).
+    shadows: bool,
     resolution: Resolution,
     /// HUD label for the current scene: the fixture name, or the mesh filename.
     scene_label: String,
@@ -462,6 +480,9 @@ impl Viewer {
             blit_bind,
             hud,
             show_hud: true,
+            gtao_preset: 1, // Medium — matches GtaoParams::default()
+            denoise: true,
+            shadows: true,
             resolution,
             scene_label,
             node_count,
@@ -553,6 +574,28 @@ impl Viewer {
             }
             KeyCode::KeyH if pressed => {
                 self.show_hud = !self.show_hud;
+                is_movement = false;
+            }
+            KeyCode::KeyG if pressed => {
+                // Cycle GTAO quality preset: Low → Medium → High → Ultra → Low.
+                self.gtao_preset = (self.gtao_preset + 1) % GTAO_PRESETS.len();
+                let (_, slice_count, steps_per_slice) = GTAO_PRESETS[self.gtao_preset];
+                self.renderer.set_gtao_params(GtaoParams {
+                    slice_count,
+                    steps_per_slice,
+                    effect_radius: GTAO_RADIUS,
+                    frame_index: 0, // overwritten by the renderer each frame
+                });
+                is_movement = false;
+            }
+            KeyCode::KeyN if pressed => {
+                self.denoise = !self.denoise; // GTAO denoise + TAA
+                self.renderer.set_denoise(self.denoise);
+                is_movement = false;
+            }
+            KeyCode::KeyK if pressed => {
+                self.shadows = !self.shadows; // ray-traced hard sun shadows
+                self.renderer.set_shadows(self.shadows);
                 is_movement = false;
             }
             KeyCode::KeyB if pressed => {

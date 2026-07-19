@@ -1,20 +1,30 @@
-//! GPU material-render differential (`docs/materials/03-gpu-read.md`).
+//! GPU **deferred**-palette render test (Stage B).
 //!
-//! Renders a coloured scene to a texture and reads the framebuffer back, proving
-//! the WGSL hit-time material read (`render.wgsl::read_material`) produces the
-//! table colour the CPU packer and `read_slot` agree on — the **on-hardware** end
-//! of the bit-exact contract (the CPU end is pinned by
-//! `voxel_core::palette`'s `wgsl_bit_layout_matches_pack`). It also naga-validates
-//! `render.wgsl` (the shader only compiles when `GpuRenderer::new` runs).
+//! Builds a material-indexed scene (no baked colour → the renderer's `Palette`
+//! albedo mode), renders it through GTAO's deferred pipeline (palette g-buffer
+//! variant → `gbuf_albedo` → composite, gated by `dims.w` bit2) and reads the
+//! framebuffer back. Proves (a) the palette g-buffer + `palette_lookup.wgsl`
+//! (`read_material`) naga-validate, and (b) per-voxel **material** colour reaches
+//! the screen, lit by the deferred chain.
 //!
-//! Gated like `differential.rs`: with no adapter it skips (passes), unless
-//! `VOXEL_REQUIRE_GPU=1` forces a hard failure so a GPU lane can't silently skip.
+//! The scene splits each `8³` leaf into a red half and a green half (`x % 8 < 4`),
+//! so every leaf carries **two** palette entries ⇒ `bits_per_voxel > 0` — exercising
+//! `read_material`'s index-decode path (the bits==0 single-material fast path tests
+//! nothing of it). We assert both lit hues appear in the central region; the
+//! deferred path *lights* the albedo, so we check hue-dominance, not exact bytes.
+//!
+//! Gated like `differential.rs`: with no adapter it skips, unless
+//! `VOXEL_REQUIRE_GPU=1` forces a hard failure.
 
 #![allow(clippy::cast_precision_loss)]
 
 use voxel_core::fixtures::Solid;
 use voxel_core::{MaterialTable, Resolution, SchoolBBuffer, SparseTree};
 use voxel_gpu::{GpuCamera, GpuContext, GpuError, GpuRenderer, OUTPUT_FORMAT};
+
+/// Pure red / green as packed `u32` (R in the low byte, matching `unpack4x8unorm`).
+const RED: u32 = 0xFF00_00FF;
+const GREEN: u32 = 0xFF00_FF00;
 
 fn require_gpu() -> bool {
     std::env::var_os("VOXEL_REQUIRE_GPU").is_some()
@@ -24,21 +34,14 @@ fn context_or_skip() -> Option<GpuContext> {
     match GpuContext::try_new() {
         Ok(ctx) => Some(ctx),
         Err(GpuError::NoAdapter) if !require_gpu() => {
-            eprintln!("skip: no GPU adapter present (set VOXEL_REQUIRE_GPU=1 to require one)");
+            eprintln!("skip: no GPU adapter (set VOXEL_REQUIRE_GPU=1 to require one)");
             None
         }
         Err(e) => panic!("GPU unavailable: {e}"),
     }
 }
 
-/// RGBA8 little-endian (`unpack4x8unorm`, R in the low byte): opaque red.
-const RED: u32 = 0xFF00_00FF;
-const RED_PX: [u8; 4] = [255, 0, 0, 255];
-const MAGENTA_PX: [u8; 4] = [255, 0, 255, 255];
-
-/// A perspective camera looking straight down +Z at the centre of an `n³` grid
-/// from well in front of it, with a wide enough FOV that the cube fills a large
-/// central region of the `dim×dim` framebuffer.
+/// Perspective camera looking straight down +Z at the centre of an `n³` grid.
 fn front_camera(r: Resolution, dim: u32) -> GpuCamera {
     let n = r.voxels_per_axis() as f32;
     let half = n * 0.5;
@@ -55,19 +58,16 @@ fn front_camera(r: Resolution, dim: u32) -> GpuCamera {
     }
 }
 
-/// Renders `structure` + `table` from `camera` into a `dim×dim` framebuffer and
-/// reads it back as RGBA8 pixels (row-major). `dim` must keep `dim*4` a multiple
-/// of 256 (wgpu's copy row alignment); `dim = 64` ⇒ 256.
-fn render_pixels(
+/// Renders `renderer` from `camera` into a `dim×dim` framebuffer, read back as
+/// row-major RGBA8. `dim*4` must be a multiple of 256.
+fn read_render(
     ctx: &GpuContext,
-    structure: &SchoolBBuffer,
-    table: &MaterialTable,
+    renderer: &mut GpuRenderer,
     camera: &GpuCamera,
     dim: u32,
 ) -> Vec<[u8; 4]> {
-    let mut renderer = GpuRenderer::new(ctx, structure, table).unwrap();
     let tex = ctx.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("material test output"),
+        label: Some("palette test output"),
         size: wgpu::Extent3d {
             width: dim,
             height: dim,
@@ -81,15 +81,12 @@ fn render_pixels(
         view_formats: &[],
     });
     let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-
-    let bytes = u64::from(dim * dim * 4);
     let readback = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("material test readback"),
-        size: bytes,
+        label: Some("palette test readback"),
+        size: u64::from(dim * dim * 4),
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-
     let mut encoder = ctx
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -136,37 +133,83 @@ fn render_pixels(
     px
 }
 
+/// Count *strongly* red- and green-dominant pixels in the central window. The +40
+/// margin separates a saturated lit palette colour from any balanced fallback.
+fn central_hues(px: &[[u8; 4]], dim: u32) -> (usize, usize, usize) {
+    let d = dim as usize;
+    let (lo, hi) = (d * 3 / 8, d * 5 / 8);
+    let (mut red, mut green, mut total) = (0, 0, 0);
+    for y in lo..hi {
+        for x in lo..hi {
+            let [r, g, b, _] = px[y * d + x];
+            let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
+            total += 1;
+            if r > g + 40 && r > b + 40 {
+                red += 1;
+            } else if g > r + 40 && g > b + 40 {
+                green += 1;
+            }
+        }
+    }
+    (red, green, total)
+}
+
 #[test]
-fn gpu_renders_assigned_material_colour() {
+fn deferred_palette_materials_reach_the_screen_via_index_decode() {
     let Some(ctx) = context_or_skip() else { return };
+    assert_eq!(OUTPUT_FORMAT, wgpu::TextureFormat::Rgba8Unorm);
+
     let r = Resolution::new(32).unwrap();
+    let dim = 64u32; // dim*4 = 256, a valid readback bytes_per_row
+
+    // Solid cube, each 8³ leaf split red|green within the leaf (x%8 < 4) so every
+    // leaf has a 2-entry palette ⇒ bits_per_voxel > 0 (exercises the index decode).
     let mut tree = SparseTree::build(&Solid { resolution: r });
-    tree.fill_materials(|_| 1); // every occupied voxel → global id 1
+    tree.fill_materials(|c| if c.x % 8 < 4 { 1 } else { 2 });
     let mut table = MaterialTable::missing_only();
-    assert_eq!(table.push(RED).unwrap(), 1, "first colour gets global id 1");
+    assert_eq!(table.push(RED).unwrap(), 1, "red gets global id 1");
+    assert_eq!(table.push(GREEN).unwrap(), 2, "green gets global id 2");
+
     let structure = SchoolBBuffer::from_sparse(&tree);
-
-    let dim = 64u32;
-    let px = render_pixels(&ctx, &structure, &table, &front_camera(r, dim), dim);
-
-    let red = px.iter().filter(|p| **p == RED_PX).count();
-    let magenta = px.iter().filter(|p| **p == MAGENTA_PX).count();
     assert!(
-        red > 200,
-        "the red cube should fill a large central region; only {red}/{} pixels were red",
-        px.len()
+        !structure.has_leaf_color() && !structure.leaf_mat_words().is_empty(),
+        "scene must route through the Palette albedo mode (materials, no baked colour)"
     );
-    assert_eq!(
-        magenta, 0,
-        "every voxel is colour 1, so none must render the magenta sentinel"
+
+    // Constructing this naga-validates the palette g-buffer + palette_lookup.wgsl.
+    let mut renderer = GpuRenderer::new(&ctx, &structure, &table).unwrap();
+    let px = read_render(&ctx, &mut renderer, &front_camera(r, dim), dim);
+    let (red, green, total) = central_hues(&px, dim);
+
+    // Both palette entries must reach the screen — red AND green stripes are lit and
+    // present. Only a correct `read_material` index-decode produces both saturated
+    // hues; a mis-decode collapses to one colour, the magenta sentinel, or garbage.
+    assert!(
+        red > total / 10,
+        "red material should fill ~half the striped central region; only {red}/{total} red-dominant"
     );
+    assert!(
+        green > total / 10,
+        "green material (the 2nd palette entry, bits>0 index path) should appear; only {green}/{total} green-dominant"
+    );
+}
+
+/// Strongly magenta-dominant (R and B high, G low) — the lit MISSING sentinel's
+/// signature under deferred shading.
+fn magenta_dominant(px: &[[u8; 4]]) -> usize {
+    px.iter()
+        .filter(|p| {
+            i32::from(p[0]) > i32::from(p[1]) + 40 && i32::from(p[2]) > i32::from(p[1]) + 40
+        })
+        .count()
 }
 
 #[test]
 fn gpu_unassigned_material_falls_back_to_position_not_magenta() {
-    // With no materials assigned, every hit reads global-0; the shader shades
-    // those by position (the prior fixture look), NOT magenta. This guards the
-    // gid==0 fallback so adding materials never regresses fixture rendering.
+    // With no materials assigned, every hit reads global-0; the deferred
+    // composite shades those by position (the prior fixture look), NOT the
+    // magenta sentinel. Guards the gid==0 fallback so adding materials never
+    // regresses fixture rendering.
     let Some(ctx) = context_or_skip() else { return };
     let r = Resolution::new(32).unwrap();
     let tree = SparseTree::build(&Solid { resolution: r }); // no fill_materials ⇒ all gid 0
@@ -174,12 +217,16 @@ fn gpu_unassigned_material_falls_back_to_position_not_magenta() {
     let structure = SchoolBBuffer::from_sparse(&tree);
 
     let dim = 64u32;
-    let px = render_pixels(&ctx, &structure, &table, &front_camera(r, dim), dim);
+    let mut renderer = GpuRenderer::new(&ctx, &structure, &table).unwrap();
+    let px = read_render(&ctx, &mut renderer, &front_camera(r, dim), dim);
 
-    let magenta = px.iter().filter(|p| **p == MAGENTA_PX).count();
-    assert_eq!(magenta, 0, "global-0 hits shade by position, never magenta");
-    // Position shading varies across the cube — many distinct hit colours, unlike
-    // the single-colour material case.
+    assert_eq!(
+        magenta_dominant(&px),
+        0,
+        "global-0 hits shade by position, never the magenta sentinel"
+    );
+    // Position shading varies across the cube — many distinct hit colours,
+    // unlike a single-material scene.
     let distinct: std::collections::HashSet<[u8; 4]> = px.iter().copied().collect();
     assert!(
         distinct.len() > 3,
