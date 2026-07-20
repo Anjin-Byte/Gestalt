@@ -351,12 +351,12 @@ const PANELS_KEY = "voxel-web.panels";
 
 type PanelId = "edit" | "scene" | "io" | "stats" | "settings";
 
-/** First-run composition: every panel folded — the canvas (and the demo
- * gallery over it) is the landing experience; the docks are one click away. */
+/** First-run composition: brush, scene, and file open — the working set for
+ * getting a model in and edited; stats and settings folded until wanted. */
 const PANEL_DEFAULTS: Record<PanelId, boolean> = {
-  edit: false,
-  scene: false,
-  io: false,
+  edit: true,
+  scene: true,
+  io: true,
   stats: false,
   settings: false,
 };
