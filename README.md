@@ -2,10 +2,10 @@
 
 # Gestalt
 
-**Sparse, MIP-mapped voxel rendering in Rust + wgpu.**
+**A voxel renderer and editor in Rust + wgpu.**
 
-A stackless hierarchical-DDA traversal on the GPU, held bit-exact against a
-CPU reference — the same core running natively and in the browser.
+Turn a 3D model into voxels, then sculpt and paint them in real time —
+natively or in the browser.
 
 <p>
   <img src="https://img.shields.io/badge/Rust-2024%20edition-1e293b?style=flat-square&logo=rust&logoColor=white" alt="Rust 2024 edition" />
@@ -14,15 +14,20 @@ CPU reference — the same core running natively and in the browser.
   <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-1e293b?style=flat-square" alt="MIT OR Apache-2.0" />
 </p>
 
+<p>
+  <img src="demo-assets/thumbs/readme_hero_shot.webp" alt="A mesh voxelized and rendered in Gestalt" width="820" />
+</p>
+
 </div>
 
 ---
 
-Gestalt turns triangle meshes into a sparse voxel structure and ray-traverses it
-on the GPU. A mesh is conservatively voxelized into a Morton-ordered brick
-hierarchy, then walked by a stackless HDDA compute kernel — and every GPU path is
-diffed against a pure CPU oracle, so the fast path is not just *fast* but provably
-*correct*. One core drives both a native viewer and a WebGPU/WASM shell.
+Gestalt voxelizes a triangle mesh — glTF, OBJ, or STL — into a sparse voxel volume
+and ray-traces it on the GPU. From there it's an editor: sculpt with brushes
+(Draw, Erase, and Clay to build and carve; Smooth, Flatten, and Inflate to shape
+the surface), paint per-voxel color, and undo or redo any stroke. The same core
+runs as a native viewer and as a WebGPU/WASM app, so it all works in the browser
+with nothing to install.
 
 ## Architecture
 
@@ -43,21 +48,14 @@ The dependency graph runs strictly **inward** toward a pure, GPU- and IO-free
 ## Quickstart
 
 ```sh
-make viewer                    # native viewer, default fixture
-make mesh MESH=model.glb       # voxelize + view a mesh (glTF · OBJ · STL)
-make web                       # build the WASM kernel and serve the web shell
+make viewer                    # open the native viewer + editor
+make mesh MESH=model.glb       # voxelize a mesh and edit it (glTF · OBJ · STL)
+make web                       # build + serve the browser app at localhost:5173
 ```
 
 Native rendering needs a `wgpu`-capable adapter (Metal / Vulkan / DX12). The web
 shell additionally needs [`wasm-pack`](https://rustwasm.github.io/wasm-pack/) and
 Node. Run `make help` for the full command catalog.
-
-## Correctness
-
-Every GPU path is validated against a pure CPU reference. The merge gate,
-`cargo xtask ci-gpu`, *fails* rather than *skips* when those bit-exact contracts
-can't be witnessed on real hardware, and `unsafe_code` is denied workspace-wide.
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the gate.
 
 ## License
 
