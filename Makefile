@@ -1,4 +1,4 @@
-# friendly-journey — developer command catalog.
+# Gestalt — developer command catalog.
 #
 # A thin convenience layer over the canonical automation: CI logic lives in
 # `cargo xtask` (Engineering Codex: build automation is a workspace member under

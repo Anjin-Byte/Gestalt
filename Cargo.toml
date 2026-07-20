@@ -13,7 +13,7 @@ edition = "2024"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87"
-repository = "https://github.com/Anjin-Byte/friendly-journey"
+repository = "https://github.com/Anjin-Byte/Gestalt"
 
 [workspace.dependencies]
 # Internal crates (path deps; the dependency graph runs inward toward voxel-core).

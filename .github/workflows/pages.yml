@@ -54,7 +54,7 @@ jobs:
         run: npm ci
         working-directory: web
 
-      # tsc gate + Vite build. vite.config bases the output at /friendly-journey/
+      # tsc gate + Vite build. vite.config bases the output at /Gestalt/
       # for `command === "build"`, so every hashed asset resolves under Pages.
       - name: Build the shell
         run: npm run build
